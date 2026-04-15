@@ -1,0 +1,24 @@
+{
+  "domain": "cuktech_ble",
+  "name": "CUKTECH BLE (Unofficial)",
+  "bluetooth": [
+    {
+      "local_name": "njcuk.fitting.ad1204",
+      "service_uuid": "0000fe95-0000-1000-8000-00805f9b34fb",
+      "connectable": true
+    }
+  ],
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/zuyan9/ha-cuk-ble",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/zuyan9/ha-cuk-ble/issues",
+  "requirements": [
+    "bleak>=0.22",
+    "bleak-retry-connector>=3.5",
+    "cryptography>=42"
+  ],
+  "version": "0.2.0"
+}

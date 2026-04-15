@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=66"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cuktech-ad1204u"
+version = "0.2.0"
+description = "Local BLE telemetry client for the CUKTECH AD1204U charger (Mijia njcuk.fitting.ad1204)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "bleak>=0.22",
+    "bleak-retry-connector>=3.5",
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+]
+cloud-token = [
+    # Used only by tools/ad1204u_fetch_token.py to pull the BLE token from the
+    # Xiaomi cloud. Not required for runtime / HA integration.
+    "requests>=2.31",
+]
+
+[tool.setuptools]
+# The runtime library is vendored inside custom_components/cuktech_ble/lib/
+# so Home Assistant can import it at load time. For dev/tests/tools, we map the
+# top-level `cuktech_ble` import to the same location.
+package-dir = {"cuktech_ble" = "custom_components/cuktech_ble/lib"}
+packages = [
+    "cuktech_ble",
+    "cuktech_ble.miot",
+    "cuktech_ble.xiaomi",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

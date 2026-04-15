@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Editor / agent metadata
+.claude/
+.codex
+.vscode/
+.idea/
+
+# Local build / dist
+build/
+dist/
+
+# Secrets — BLE pairing tokens, cached creds
+*.token
+.cuktech_ble.token
+
+# Android bug reports (source data for RE, too large to track)
+bugreport-*/
+
+# Local scratch
+test.py
+scratch/
+*.local.*
