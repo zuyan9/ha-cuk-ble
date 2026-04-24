@@ -93,6 +93,22 @@ After login the device may spontaneously push a counter=0/1 telemetry frame
 8 frames, skips anything that doesn't decrypt or doesn't match the request seq
 in `pt[2:4]`, and returns the matching response.
 
+### Offline btsnoop decode
+
+Mi Home captures can be decoded without connecting to the charger again:
+
+```bash
+.venv/bin/python tools/decrypt_btsnoop_miot.py /tmp/btsnoop.log \
+    --mac AA:BB:CC:DD:EE:FF \
+    --token 00112233445566778899aabb
+```
+
+The script extracts the login randoms from the auth channel, derives the
+same `app_key` / `dev_key` and IVs used by the live client, decrypts MIOT
+frames on handles `0x0019` / `0x001c`, and emits one CSV row per decoded
+property request, response, set, or notify tuple. It is the preferred path
+for turning tablet captures into evidence for new writable properties.
+
 ### BlueZ MTU quirk
 
 BlueZ defaults to ATT MTU 23. The 32-byte `CMD_SEND_INFO` HMAC during login

@@ -6,14 +6,14 @@ file is the shareable summary.
 
 ## Quick wins
 
-- [ ] **Cut a real release tag** (`v0.3.0` or similar). HACS currently shows
+- [x] **Cut a real release tag** (`v0.3.0` or similar). HACS currently shows
   commit SHAs to users; tagged releases give them version numbers and a
   rendered changelog.
-- [ ] **Formalize the decrypt-set_properties flow into
+- [x] **Formalize the decrypt-set_properties flow into
   `tools/decrypt_btsnoop_miot.py`.** The inline Python heredoc we've used
   should become a script that takes a btsnoop log plus token and emits one
   row per decrypted frame (`ts, opcode, siid, piid, value`).
-- [ ] **Tablet-unlock helper.** The sendevent `L` pattern we scripted during
+- [x] **Tablet-unlock helper.** The sendevent `L` pattern we scripted during
   the 2026-04-23 Mi Home capture belongs in `tools/tablet_unlock.sh` so
   future captures don't re-derive touchscreen coordinates.
 

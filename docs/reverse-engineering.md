@@ -7,12 +7,13 @@
 2. [`tools/btsnoop_att.py`](../tools/btsnoop_att.py) extracts ATT traffic
    filtered by device MAC — this exposed the full handshake, the post-login
    MIOT framing, and that requests are written to UUID `0x001a` (not AVDTP).
+   [`tools/decrypt_btsnoop_miot.py`](../tools/decrypt_btsnoop_miot.py) is now
+   the repeatable decode path for captures that include a full login.
 
-3. **Session keys were reconstructable** from the logged `app_rand` /
-   `dev_rand` because the binding token was already known (obtained via
-   `Xiaomi-cloud-tokens-extractor`). That let us offline-decrypt Mi Home's
-   own request/response traffic, which is where the `33 20 … / 93 20 …` MIOT
-   get-properties wire format came from.
+3. **Session keys are reconstructable** from the logged `app_rand` /
+   `dev_rand` because the binding token is known. That lets us
+   offline-decrypt Mi Home's own request/response traffic, which is where
+   the `33 20 ... / 93 20 ...` MIOT get-properties wire format came from.
 
 4. **Per-port word decode** was pinned down by stepping through loads of
    known wattages on each port and looking for a cross-port-consistent
