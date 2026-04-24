@@ -28,8 +28,15 @@ One parent device per charger, with a sub-device per port (C1, C2, C3, A).
 All sub-devices inherit the parent's area.
 
 Per port: **power** (W), **voltage** (V), **current** (A), **protocol**
-(diagnostic), **PDO cap** (W, disabled by default). There's also a
-charger-level **total power** sensor.
+(diagnostic), **PDO cap** (W, diagnostic). There's also a charger-level
+**total power** sensor.
+
+Charger-level controls (on the parent device):
+
+- **Scene mode** (select): AI Mode / Hybrid / Single / Dual.
+- **USB-A always on** (switch): keeps the USB-A rail energized.
+- **Screen off when idle** (switch): charger display auto-sleeps.
+- **Lock screen orientation** (switch): disables display auto-rotate.
 
 ## Options
 
@@ -45,7 +52,8 @@ charger-level **total power** sensor.
 ## Notes and limits
 
 - **Writable controls:** USB-A always on, screen-off when idle, lock screen
-  orientation. More can be added as the wire format expands.
+  orientation, scene mode. More will be added as we reverse additional
+  settings (per-port protocol masks are still pending).
 - **One BLE peer at a time.** If Mi Home is connected on your phone, HA can't
   talk to the charger. Force-close Mi Home if you see connect timeouts.
 - **Diagnostics** (Device page → ⋮ → Download diagnostics) redacts the token

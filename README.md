@@ -1,8 +1,9 @@
 # CUKTECH BLE for Home Assistant
 
 Local Home Assistant integration for the **CUKTECH AD1204U "10 GaN Charger
-Ultra"**. Reads per-port power, voltage, current, and protocol over BLE —
-no cloud polling, no outbound traffic.
+Ultra"**. Reads per-port power, voltage, current, and protocol over BLE, and
+exposes a small set of charger settings (scene mode, USB-A always on,
+screen toggles) as HA controls — no cloud polling, no outbound traffic.
 
 [![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=zuyan9&repository=ha-cuk-ble&category=integration)
 [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=cuktech_ble)

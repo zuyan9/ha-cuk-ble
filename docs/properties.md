@@ -124,12 +124,17 @@ Observed on the C3/A shared rail (voltage-band driven, see earlier notes):
 
 ## Open questions
 
-- **b1 protocol codes** still unconfirmed: UFCS (charger advertises UFCS 60W
-  per KM003C), Xiaomi 90W proprietary, Apple 2.4A-divider (`0x60` may be DCP
-  or Apple — not distinguished).
-- **No EPR**: the charger tops out at PD 3.0 SPR 100W — KM003C confirms, and
-  the "100W" case landed on plain 20V/5A SPR rather than PD 3.1 28V+.
-- **`0x08` vs `0x0a`**: needs a test forcing the same sink to re-handshake
-  under controlled conditions.
-- **`protocol_ctl_extend`** (u32 `0x03030f0f` constant so far), **`port_ctl`**
-  bitmap (`0x0f` constant) — not varied under test.
+- **`b1` under real current.** Every SINK240 sweep row came back with
+  `b1=0x0a` because the trigger board draws ~0 A. `b1` under a real load
+  (phone/laptop pulling amps) still needs a pass; earlier captures hint
+  that `b1` can shift to `0x01`, `0x03`, `0x08`, etc. under load.
+- **`b0` upper nibble** (seen `0x01` and `0x11` on same port at different
+  times) — CC polarity vs port role unresolved. Needs cable-flip / port-
+  swap with the same sink under the same contract.
+- **No EPR**: the charger tops out at PD 3.0 SPR 100 W (KM003C confirms);
+  the "100 W" SINK240 case landed on plain 20 V/5 A SPR rather than PD 3.1.
+- **`protocol_ctl_extend`** (u32 `0x03030f0f` constant so far) and
+  **`port_ctl`** bitmap (`0x0f` constant) — not varied by Mi Home during
+  our captures. Their writable semantics are still unknown.
+- **piid `0x0e`** — Mi Home writes val=2 on every reconnect. Purpose
+  unknown; the integration doesn't touch it.

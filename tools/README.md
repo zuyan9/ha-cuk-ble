@@ -15,6 +15,7 @@ All scripts run from the repo's `.venv`:
 |---|---|
 | [`ad1204u_fetch_token.py`](ad1204u_fetch_token.py) | Fetch BLE pairing token from Xiaomi Cloud (password + email 2FA). No `micloud` dep — requires `pip install -e ".[cloud-token]"`. Writes `~/.cuktech_ble.token`. |
 | [`ad1204u_read_props.py`](ad1204u_read_props.py) | One-shot: log in, send `get_properties`, print decoded per-port power + voltage + current + protocol. |
+| [`sweep_logger.py`](sweep_logger.py) | Persistent BLE session with background KM003C reader. Samples both sources every N seconds, parses KM003C PD events for live contract labels, writes a jsonl log. |
 | [`ad1204u_probe.py`](ad1204u_probe.py) | Log in and log every GATT notification for a fixed duration. Used for reverse-engineering new properties. |
 | [`ad1204u_register.py`](ad1204u_register.py) | **Write path.** One-time binding for a factory-reset (unpaired) charger. Writes the 12-byte token + 16-byte bind_key + DID back to the token file. |
 | [`ad1204u_register_probe.py`](ad1204u_register_probe.py) | Variant of `ad1204u_register.py` that only probes the pairing-mode handshake without actually binding. |
@@ -25,7 +26,9 @@ All scripts run from the repo's `.venv`:
 
 ## Safety
 
-- Only `ad1204u_register.py` performs control-plane BLE writes (pairing). The
-  rest are read-only — login + `get_properties` at most.
-- Mi Home can't be connected at the same time as these tools. Force-close it
-  on the phone before running.
+- Only `ad1204u_register.py` performs control-plane BLE writes that touch
+  the charger's pairing state. Every other tool here reads only; the
+  HA integration itself can issue `set_properties` writes (switches +
+  scene-mode select).
+- Mi Home can't be connected at the same time as these tools. Force-close
+  it on the phone before running.
