@@ -22,6 +22,7 @@ That's it — HA creates one device per charger with sensors for each port.
 
 - [Usage, options, and getting the token manually](docs/usage.md)
 - [Protocol notes and reverse-engineering](docs/reverse-engineering.md)
+- [Roadmap / open questions](ROADMAP.md)
 - [Issues / PRs](https://github.com/zuyan9/ha-cuk-ble/issues)
 
 Unofficial; not affiliated with CUKTECH or Xiaomi.
