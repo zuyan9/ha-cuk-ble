@@ -29,8 +29,8 @@ def test_home_assistant_skeleton_registers_expected_platforms() -> None:
     # Writable booleans (usb_a_always_on, screenoff_while_idle, screen_dir_lock)
     # use the set_properties wire format reversed from a tablet Mi Home capture.
     assert "Platform.SWITCH" in init_py
-    # Still no numeric/select writes — those depend on wire format we haven't
-    # exercised yet.
-    assert "Platform.SELECT" not in init_py
+    # scene_mode enum reversed from a second capture — AI/Hybrid/Single/Dual.
+    assert "Platform.SELECT" in init_py
+    # Number and button writes still not exercised.
     assert "Platform.NUMBER" not in init_py
     assert "Platform.BUTTON" not in init_py

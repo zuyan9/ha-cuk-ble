@@ -23,6 +23,11 @@ class AD1204USwitchDescription(SwitchEntityDescription):
     siid: int
     piid: int
     getter: Callable[[AD1204UData], bool | None]
+    # Mi Home sends some "bool"-looking toggles as u8 0/1 (type=0x01 marker=0x10)
+    # rather than the proper bool encoding (marker=0x00). Match that so writes
+    # are byte-identical to the vendor app — confirmed via tablet capture on
+    # 2026-04-23.
+    kind: str = "bool"  # "bool" or "u8"
 
 
 SWITCHES: tuple[AD1204USwitchDescription, ...] = (
@@ -31,6 +36,7 @@ SWITCHES: tuple[AD1204USwitchDescription, ...] = (
         translation_key="usb_a_always_on",
         siid=2,
         piid=0x000F,
+        kind="bool",
         getter=lambda data: data.usb_a_always_on,
     ),
     AD1204USwitchDescription(
@@ -38,6 +44,7 @@ SWITCHES: tuple[AD1204USwitchDescription, ...] = (
         translation_key="screenoff_while_idle",
         siid=2,
         piid=0x0013,
+        kind="u8",
         getter=lambda data: data.screenoff_while_idle,
     ),
     AD1204USwitchDescription(
@@ -45,6 +52,7 @@ SWITCHES: tuple[AD1204USwitchDescription, ...] = (
         translation_key="screen_dir_lock",
         siid=2,
         piid=0x0014,
+        kind="u8",
         getter=lambda data: data.screen_dir_lock,
     ),
 )
@@ -88,8 +96,13 @@ class AD1204USwitch(AD1204UEntity, SwitchEntity):
         await self._write(False)
 
     async def _write(self, value: bool) -> None:
+        if self.entity_description.kind == "u8":
+            # Send as u8 (type=0x01 marker=0x10) to match Mi Home's wire format.
+            payload: int | bool = int(value)
+        else:
+            payload = value
         await self.coordinator.async_set_property(
             self.entity_description.siid,
             self.entity_description.piid,
-            value,
+            payload,
         )

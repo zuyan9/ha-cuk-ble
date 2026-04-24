@@ -92,6 +92,17 @@
       "usb_a_always_on": {"name": "USB-A always on"},
       "screenoff_while_idle": {"name": "Screen off when idle"},
       "screen_dir_lock": {"name": "Lock screen orientation"}
+    },
+    "select": {
+      "scene_mode": {
+        "name": "Scene mode",
+        "state": {
+          "ai_mode": "AI Mode",
+          "hybrid": "Hybrid",
+          "single": "Single",
+          "dual": "Dual"
+        }
+      }
     }
   },
   "options": {
