@@ -52,6 +52,19 @@ def test_parse_set_response_rejects_other_opcodes() -> None:
         parse_set_response(pt)
 
 
+def test_parse_response_accepts_0x0e_single_property_opcode() -> None:
+    # Single-property response seen on live firmware.
+    pt = bytes.fromhex(
+        "0e 20 34 12 03 01 02 13 00 00 00 01 10 00".replace(" ", "")
+    )
+    items = parse_response(pt)
+
+    assert len(items) == 1
+    assert items[0].key == (2, 0x13)
+    assert items[0].marker == 0x10
+    assert items[0].value == 0
+
+
 def test_parse_response_accepts_0x1c_opcode_variant() -> None:
     # Same body layout as 0x93, but with opcode 0x1c (seen live on the charger).
     pt = bytes.fromhex(

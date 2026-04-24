@@ -197,7 +197,10 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 await self._disconnect()
                 raise UpdateFailed(f"set_property failed: {exc}") from exc
             self._last_success_ts = asyncio.get_event_loop().time()
-        await self.async_request_refresh()
+        # Use async_refresh (immediate) rather than async_request_refresh
+        # (debounced) so entity state mirrors the write before the service
+        # call returns to the HA client.
+        await self.async_refresh()
 
     # ----------------------------------------------------------- polling
     async def _async_update_data(self) -> AD1204UData:

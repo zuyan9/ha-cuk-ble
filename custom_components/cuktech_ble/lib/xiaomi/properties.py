@@ -53,9 +53,12 @@ def encode_get_properties(seq: int, tuples: tuple[tuple[int, int], ...]) -> byte
 
 
 def parse_response(pt: bytes) -> list[PropertyValue]:
-    # Charger returns either 0x93 (original btsnoop) or 0x1c (seen live on
-    # other get_properties flows) — both carry the same body layout.
-    if len(pt) < 6 or pt[1] != 0x20 or pt[0] not in (0x93, 0x1c):
+    # The charger's get-response opcode varies with request shape:
+    #   0x93 — original btsnoop captures (bulk read).
+    #   0x1c — multi-property reads from our integration.
+    #   0x0e — single-property reads.
+    # Body layout is identical across all three.
+    if len(pt) < 6 or pt[1] != 0x20 or pt[0] not in (0x93, 0x1c, 0x0e):
         raise MiotProtocolError(f"bad response header: {pt[:6].hex()}")
     i = 6
     out: list[PropertyValue] = []
