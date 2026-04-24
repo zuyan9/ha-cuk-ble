@@ -46,28 +46,48 @@ async def _run(address: str, token_file: Path, duration: float, debug: bool) -> 
 
     print(f"connecting to {address}...", file=sys.stderr)
     async with BleakClient(device, timeout=60) as client:
-        auth = MiAuthClient(client, timeout=15, bluez_start_notify=True)
-        # Match Mi Home's subscribe order: AVDTP → greet → UPNP → login.
-        await auth.subscribe(upnp=False)
-        try:
-            await auth.greet()
-            await auth.subscribe_upnp()
-            keys = await auth.login(token)
-            print("login OK — session keys:", file=sys.stderr)
-            print(
-                json.dumps(
-                    {
-                        "dev_key_hex": keys.dev_key.hex(),
-                        "app_key_hex": keys.app_key.hex(),
-                        "dev_iv_hex": keys.dev_iv.hex(),
-                        "app_iv_hex": keys.app_iv.hex(),
-                    },
-                    indent=2,
-                ),
-                file=sys.stderr,
-            )
-        finally:
-            await auth.unsubscribe()
+        backend = getattr(client, "_backend", None)
+        if backend is not None and hasattr(backend, "_acquire_mtu"):
+            try:
+                await backend._acquire_mtu()
+                print(f"MTU: {client.mtu_size}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                print(f"_acquire_mtu failed: {exc}", file=sys.stderr)
+
+        keys = None
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            auth = MiAuthClient(client, timeout=15, bluez_start_notify=True)
+            try:
+                # Match Mi Home's subscribe order: AVDTP -> greet -> UPNP -> login.
+                await auth.subscribe(upnp=False)
+                await auth.greet()
+                await auth.subscribe_upnp()
+                keys = await auth.login(token)
+                print("login OK", file=sys.stderr)
+                if debug:
+                    print(
+                        json.dumps(
+                            {
+                                "dev_key_hex": keys.dev_key.hex(),
+                                "app_key_hex": keys.app_key.hex(),
+                                "dev_iv_hex": keys.dev_iv.hex(),
+                                "app_iv_hex": keys.app_iv.hex(),
+                            },
+                            indent=2,
+                        ),
+                        file=sys.stderr,
+                    )
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                print(f"login attempt {attempt + 1} failed: {exc}", file=sys.stderr)
+                await asyncio.sleep(1.5)
+            finally:
+                await auth.unsubscribe()
+        if keys is None:
+            assert last_exc is not None
+            raise last_exc
 
         notify_uuids: list[str] = []
         for svc in client.services:
@@ -94,7 +114,9 @@ async def _run(address: str, token_file: Path, duration: float, debug: bool) -> 
 
         for uuid in notify_uuids:
             try:
-                await client.start_notify(uuid, make_handler(uuid))
+                await client.start_notify(
+                    uuid, make_handler(uuid), bluez={"use_start_notify": True}
+                )
             except Exception as exc:  # noqa: BLE001
                 print(f"start_notify({uuid}) failed: {exc}", file=sys.stderr)
 
