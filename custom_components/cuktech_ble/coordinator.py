@@ -32,7 +32,7 @@ from .lib.ports import (
     decode_port_info,
 )
 from .lib.xiaomi import MiAuthClient
-from .lib.xiaomi.properties import get_properties
+from .lib.xiaomi.properties import get_properties, set_property
 from .lib.xiaomi.session import MiSession
 
 _LOGGER = logging.getLogger(__name__)
@@ -171,6 +171,33 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 _LOGGER.debug("%s.%s() failed", label, coro_name, exc_info=True)
         if client is not None:
             _LOGGER.info("AD1204U %s disconnected", self.address)
+
+    # ------------------------------------------------------------ writes
+    async def async_set_property(
+        self,
+        siid: int,
+        piid: int,
+        value: int | bool,
+        *,
+        u32: bool = False,
+    ) -> None:
+        """Write a MIOT property under the same lock as polling.
+
+        Triggers an immediate refresh so entity state reflects the write
+        before HA services return.
+        """
+        async with self._lock:
+            try:
+                session = await self._ensure_connected()
+                await set_property(session, siid, piid, value, u32=u32)
+            except BleakError as exc:
+                await self._disconnect()
+                raise UpdateFailed(f"BLE error on set: {exc}") from exc
+            except Exception as exc:
+                await self._disconnect()
+                raise UpdateFailed(f"set_property failed: {exc}") from exc
+            self._last_success_ts = asyncio.get_event_loop().time()
+        await self.async_request_refresh()
 
     # ----------------------------------------------------------- polling
     async def _async_update_data(self) -> AD1204UData:

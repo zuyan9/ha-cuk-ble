@@ -41,7 +41,8 @@ def test_decode_pdo_caps_maps_watt_code_byte_to_known_wattage() -> None:
     assert caps == {"c2": 100, "c1": 60}
 
 
-def test_decode_pdo_caps_returns_none_for_unknown_code() -> None:
-    caps = decode_pdo_caps(0x00FF_0064, high_port="c3", low_port="a")
+def test_decode_pdo_caps_returns_none_for_zero_byte() -> None:
+    # low half 0x0064 (100 W), high half 0x0000 (idle/no contract).
+    caps = decode_pdo_caps(0x0000_0064, high_port="c3", low_port="a")
 
     assert caps == {"a": 100, "c3": None}

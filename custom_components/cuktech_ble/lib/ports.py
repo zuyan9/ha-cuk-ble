@@ -100,24 +100,51 @@ def decode_port_info(port: str, value: int) -> PortInfo:
 
 # ----- c1c2_protocol / c3a_protocol words (2.11 / 2.12) ---------------------
 # Each u32 is two LE16 halves: low16 = C2/A, high16 = C1/C3.
-# Low byte of each half is the negotiated PDO watt cap.
+# Each half is two bytes: low byte = PDO watt cap (decimal), high byte = kind.
+#
+# Verified on C1 across PD-fixed 5/9/12/15/20V and PPS 3.3-11V / 3.3-21V with
+# a SINK240 trigger board:
+#     cap_byte = watts (linear, e.g. 0x0f=15W, 0x1b=27W, 0x24=36W, 0x2d=45W,
+#     0x37=55W PPS, 0x50=80W PPS, 0x64=100W max SPR).
+# The old hardcoded lookup (0x0a/0f/1e/2d/37/3c/50/64) was just coincidences
+# observed in early captures — the encoding is just `cap_byte`.
+#
+# high byte (verified on C1/C2):
+#     0x07 = PD Fixed PDO
+#     0x08 = PD PPS PDO (APDO)
+# Other high-byte values previously observed on the C3/A shared rail
+# (0x01, 0x02, 0x04) track that rail's voltage-band quirks — see
+# docs/properties.md.
 
-WATT_CAP_BY_BYTE: dict[int, int] = {
-    0x0a: 10,
-    0x0f: 15,
-    0x1e: 30,
-    0x2d: 45,
-    0x37: 55,
-    0x3c: 60,
-    0x50: 80,
-    0x64: 100,
+PDO_KIND_BY_HIGH_BYTE: dict[int, str] = {
+    0x07: "pd_fixed",
+    0x08: "pd_pps",
 }
 
 
 def decode_pdo_caps(value: int, *, high_port: str, low_port: str) -> dict[str, int | None]:
+    """Extract negotiated watt caps for the two ports sharing this u32 word."""
     low_half = value & 0xFFFF
     high_half = (value >> 16) & 0xFFFF
+    def _cap(half: int) -> int | None:
+        byte = half & 0xFF
+        # An idle port reports both halves = 0; treat that as "no contract".
+        return byte or None
     return {
-        low_port: WATT_CAP_BY_BYTE.get(low_half & 0xFF),
-        high_port: WATT_CAP_BY_BYTE.get(high_half & 0xFF),
+        low_port: _cap(low_half),
+        high_port: _cap(high_half),
+    }
+
+
+def decode_pdo_kind(value: int, *, high_port: str, low_port: str) -> dict[str, str | None]:
+    """Extract PDO kind (`pd_fixed`/`pd_pps`/None) for the two paired ports."""
+    low_half = value & 0xFFFF
+    high_half = (value >> 16) & 0xFFFF
+    def _kind(half: int) -> str | None:
+        if (half & 0xFF) == 0:
+            return None
+        return PDO_KIND_BY_HIGH_BYTE.get((half >> 8) & 0xFF)
+    return {
+        low_port: _kind(low_half),
+        high_port: _kind(high_half),
     }

@@ -21,11 +21,16 @@ def test_home_assistant_manifest_is_connectable_sensor_only_shape() -> None:
     ]
 
 
-def test_home_assistant_skeleton_does_not_define_control_platforms() -> None:
+def test_home_assistant_skeleton_registers_expected_platforms() -> None:
     init_py = Path("custom_components/cuktech_ble/__init__.py").read_text()
 
     assert "Platform.SENSOR" in init_py
-    assert "Platform.SWITCH" not in init_py
+    assert "Platform.BINARY_SENSOR" in init_py
+    # Writable booleans (usb_a_always_on, screenoff_while_idle, screen_dir_lock)
+    # use the set_properties wire format reversed from a tablet Mi Home capture.
+    assert "Platform.SWITCH" in init_py
+    # Still no numeric/select writes — those depend on wire format we haven't
+    # exercised yet.
     assert "Platform.SELECT" not in init_py
     assert "Platform.NUMBER" not in init_py
     assert "Platform.BUTTON" not in init_py

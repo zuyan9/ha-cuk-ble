@@ -94,20 +94,33 @@ Idle ports (`b0=0`) always report `b2 = b3 = 0`.
 Each u32 is two LE16 halves: low16 = C2/A, high16 = C1/C3. The low byte of
 each half encodes the **negotiated PDO watt cap**:
 
-| low byte | watts |
-|----------|-------|
-| `0x0a` | 10 |
-| `0x0f` | 15 |
-| `0x1e` | 30 |
-| `0x2d` | 45 |
-| `0x37` | 55 |
-| `0x3c` | 60 |
-| `0x50` | 80 |
-| `0x64` | 100 |
+**The low byte is the watt cap in decimal** — the original "observed values"
+table (0x0a/0x0f/0x1e/…) was coincidence. A SINK240 sweep across PD Fixed
+5/9/12/15/20 V and two PPS bands on C1 produced a linear progression:
 
-The high byte tracks a voltage bucket / port-mode but is not yet cleanly
-mapped (observed: `0x01` on 5V PD and USB-A DCP, `0x02` on USB-A QC, `0x07`
-on PD ≥15V, `0x08` on C1 9–10V PD).
+| contract | low byte | dec | watts |
+|---|---|---|---|
+| Fixed 5V | `0x0f` | 15 | 15 |
+| Fixed 9V | `0x1b` | 27 | 27 |
+| Fixed 12V | `0x24` | 36 | 36 |
+| Fixed 15V | `0x2d` | 45 | 45 |
+| Fixed 20V | `0x64` | 100 | 100 (charger SPR ceiling) |
+| PPS 3.3–11V / 5A | `0x37` | 55 | 55 |
+| PPS 3.3–21V / 4A | `0x50` | 80 | 80 |
+
+`cap_w = low_byte_decimal`. A zero low byte means "no contract / idle port".
+
+### High byte (PDO kind)
+
+Observed on C1/C2:
+- `0x07` — PD Fixed PDO (every Fixed contract tested)
+- `0x08` — PD PPS (APDO) (both PPS bands tested)
+
+Observed on the C3/A shared rail (voltage-band driven, see earlier notes):
+- `0x01` at 5 V USB-A DCP
+- `0x02` at USB-A QC
+- `0x04` at USB-A 9 V (QC 2.0 / SCP phone charging)
+
 
 ## Open questions
 

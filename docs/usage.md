@@ -44,7 +44,8 @@ charger-level **total power** sensor.
 
 ## Notes and limits
 
-- **Read-only.** No switches, selects, or buttons are exposed.
+- **Writable controls:** USB-A always on, screen-off when idle, lock screen
+  orientation. More can be added as the wire format expands.
 - **One BLE peer at a time.** If Mi Home is connected on your phone, HA can't
   talk to the charger. Force-close Mi Home if you see connect timeouts.
 - **Diagnostics** (Device page → ⋮ → Download diagnostics) redacts the token

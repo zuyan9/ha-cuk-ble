@@ -29,7 +29,11 @@ from .const import (
 from .coordinator import AD1204UCoordinator
 from .lib.ports import PORTS
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 _LOGGER = logging.getLogger(__name__)
 
 

@@ -67,6 +67,34 @@ Captured on the Pi via `tools/ad1204u_read_props.py`:
 
 **Idle-code observation:** when a port goes idle after being loaded, the charger cycles through different `b1` values (seen: `0x01`, `0x03`, `0x06`, `0x30`, `0x60`, `0x80` on idle ports). This is why the decoder treats `b0` as the authoritative idle flag and ignores `b1` when idle.
 
+## SINK240 sweep on C1 (2026-04-23)
+
+Ran `tools/sweep_logger.py` with a Power-Z SINK240 on C1 dialing each PD
+preset, KM003C as ground truth. SINK240 draws essentially nothing, so these
+rows are "contract negotiated, no load".
+
+| SINK240 preset | b0 | b1 | b3 (V) | cap byte → W | high byte |
+|---|---|---|---|---|---|
+| PD Fixed 5 V | 0x01 | 0x0a | 0x33 (5.1) | 0x0f → 15 | 0x07 |
+| PD Fixed 9 V | 0x01 | 0x0a | 0x5a (9.0) | 0x1b → 27 | 0x07 |
+| PD Fixed 12 V | 0x01 | 0x0a | 0x78 (12.0) | 0x24 → 36 | 0x07 |
+| PD Fixed 15 V | 0x01 | 0x0a | 0x96 (15.0) | 0x2d → 45 | 0x07 |
+| PD Fixed 20 V | 0x01 | 0x0a | 0xc8 (20.0) | 0x64 → 100 | 0x07 |
+| PPS1 (3.3–11 V / 5 A) | 0x01 | 0x0a | varies | 0x37 → 55 | 0x08 |
+| PPS2 (3.3–21 V / 4 A) | 0x01 | 0x0a | varies | 0x50 → 80 | 0x08 |
+
+Three structural findings:
+1. **`cap_w = cap_byte` (decimal).** The previous "known values" list was
+   coincidence; real encoding is linear and accepts arbitrary watts.
+2. **`high byte` = PDO kind.** `0x07` on every Fixed contract, `0x08` on
+   every PPS contract. That's the reliable fixed-vs-PPS signal.
+3. **`b1` alone cannot distinguish Fixed from PPS when the port is idle.**
+   `0x0a` covers both. Pair with the PDO high byte for accurate sub-type.
+
+What's still not nailed: `b1` under real load (SINK240 draws no current; we'd
+need a real sink) and `b0` upper-nibble semantics (needs cable-flip /
+port-swap with the same sink).
+
 These contradict the earlier assumption that `0x01`/`0x03` meant "idle" — they
 are PD codes that happen to appear at rest (because the port is on a PD
 handshake idle/advertising frame) and under load (because the PD contract

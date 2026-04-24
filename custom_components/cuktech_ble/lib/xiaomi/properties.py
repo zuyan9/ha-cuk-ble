@@ -53,7 +53,9 @@ def encode_get_properties(seq: int, tuples: tuple[tuple[int, int], ...]) -> byte
 
 
 def parse_response(pt: bytes) -> list[PropertyValue]:
-    if len(pt) < 6 or pt[0] != 0x93 or pt[1] != 0x20:
+    # Charger returns either 0x93 (original btsnoop) or 0x1c (seen live on
+    # other get_properties flows) — both carry the same body layout.
+    if len(pt) < 6 or pt[1] != 0x20 or pt[0] not in (0x93, 0x1c):
         raise MiotProtocolError(f"bad response header: {pt[:6].hex()}")
     i = 6
     out: list[PropertyValue] = []
@@ -92,12 +94,21 @@ async def get_properties(
 
 
 # --- set_properties (single prop) -------------------------------------------
+#
+# Wire format reversed from a tablet Mi Home capture (2026-04-23):
+#   request  = 0c 20 <seq_le2> 00 <count> (<siid> <piid_le2> <type> <marker> <value>)*
+#   response = 0b 20 <seq_le2> 01 <count> (<siid> <piid_le2> <status_le2>)*
+# See memory/project_ad1204u_miot_set.md for the full reasoning.
+
+SET_REQUEST_OPCODE = b"\x0c\x20"
+SET_RESPONSE_OPCODE = b"\x0b\x20"
+
 
 def encode_set_property(
     seq: int, siid: int, piid: int, value: int | bool, *, u32: bool = False
 ) -> bytes:
-    body = b"\x43\x20" + seq.to_bytes(2, "little")
-    body += bytes([0x01, 0x01])  # method=set, count=1
+    body = SET_REQUEST_OPCODE + seq.to_bytes(2, "little")
+    body += bytes([0x00, 0x01])  # flags(0)=0, count=1
     body += bytes([siid]) + piid.to_bytes(2, "little")
     if isinstance(value, bool):
         body += bytes([0x01, 0x00, int(value)])
@@ -106,6 +117,24 @@ def encode_set_property(
     else:
         body += bytes([0x01, 0x10, int(value) & 0xFF])
     return body
+
+
+def parse_set_response(pt: bytes) -> list[tuple[int, int, int]]:
+    """Decode a 0x0b 0x20 response. Returns [(siid, piid, status), ...]."""
+    if len(pt) < 6 or pt[:2] != SET_RESPONSE_OPCODE:
+        raise MiotProtocolError(f"bad set-response header: {pt[:6].hex()}")
+    count = pt[5]
+    i = 6
+    out: list[tuple[int, int, int]] = []
+    for _ in range(count):
+        if i + 5 > len(pt):
+            raise MiotProtocolError(f"truncated set-response: {pt.hex()}")
+        siid = pt[i]
+        piid = int.from_bytes(pt[i + 1 : i + 3], "little")
+        status = int.from_bytes(pt[i + 3 : i + 5], "little")
+        out.append((siid, piid, status))
+        i += 5
+    return out
 
 
 async def set_property(
@@ -117,5 +146,13 @@ async def set_property(
     seq: int = 0x0100,
     u32: bool = False,
 ) -> None:
+    """Write one property. Raises MiotProtocolError on non-zero status."""
     request = encode_set_property(seq, siid, piid, value, u32=u32)
-    await session.send_request(request)
+    response_pt = await session.send_request(request)
+    results = parse_set_response(response_pt)
+    for r_siid, r_piid, r_status in results:
+        if (r_siid, r_piid) == (siid, piid) and r_status != 0:
+            raise MiotProtocolError(
+                f"set_property(siid={siid}, piid=0x{piid:x}) failed "
+                f"with status 0x{r_status:04x}"
+            )
