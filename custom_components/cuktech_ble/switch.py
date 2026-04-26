@@ -178,8 +178,21 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
         else:
             new_mask = current_mask & ~(1 << self.entity_description.bit_index)
             
-        await self.coordinator.async_set_property(2, 0x0010, new_mask)
-        # Optimistically update the state so the UI reacts immediately.
+        # Optimistically update the state BEFORE yielding to prevent race
+        # conditions if multiple ports are toggled concurrently.
+        data.port_ctl = new_mask
+        self.async_write_ha_state()
+
+        try:
+            await self.coordinator.async_set_property(2, 0x0010, new_mask)
+        except Exception:
+            # Revert optimistic update on failure (async_refresh will also fix it later)
+            data.port_ctl = current_mask
+            self.async_write_ha_state()
+            raise
+        
+        # In case async_refresh replaced the data object with a snapshot from
+        # before the device fully settled, re-apply our optimistic value.
         if self.coordinator.data is not None:
             self.coordinator.data.port_ctl = new_mask
-        self.async_write_ha_state()
+            self.async_write_ha_state()
