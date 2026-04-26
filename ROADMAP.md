@@ -41,9 +41,8 @@ file is the shareable summary.
 ## Integration polish (after protocol masks land)
 
 - [ ] Switches for per-port UFCS/PD/PPS enable.
-- [ ] Switches (or a combined Number) for the `port_ctl` port-enable bitmap.
-- [ ] Number entity for `screen_save_time` (u8, piid `0x06`) if it turns
-  out to be a minutes value.
+- [x] Switches for the `port_ctl` port-enable bitmap.
+- [x] Select entity for `screen_save_time` (u8, piid `0x06`)
 
 ## Housekeeping
 

@@ -33,3 +33,18 @@ bugreport-*/
 test.py
 scratch/
 *.local.*
+
+# Local helper scripts (deploy / pull / debug)
+commit_push.sh
+copy_files*.py
+restart_ha.py
+update_ha.py
+update_hacs*.py
+
+# Other agent metadata kept out of the repo
+GEMINI.md
+
+# Tablet / charger screencaps (debugging artifacts)
+screen*.png
+/tmp/*.pcap
+

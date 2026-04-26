@@ -54,8 +54,18 @@ Charger-level controls (on the parent device):
 - **Writable controls:** USB-A always on, screen-off when idle, lock screen
   orientation, scene mode. More will be added as we reverse additional
   settings (per-port protocol masks are still pending).
-- **One BLE peer at a time.** If Mi Home is connected on your phone, HA can't
-  talk to the charger. Force-close Mi Home if you see connect timeouts.
+- **One BLE peer at a time.** The charger only accepts a single Bluetooth
+  client. While Mi Home is open and connected on a phone or tablet, HA
+  can't reach the charger and entities will go *unavailable*. Same the
+  other way: while HA is polling, Mi Home shows "Offline". To switch:
+    - **HA → phone:** disable the integration (Settings → Devices &
+      services → CUKTECH BLE → ⋮ → Disable). Open Mi Home; it'll
+      reconnect within a few seconds.
+    - **Phone → HA:** force-close Mi Home (swipe away on the phone).
+      Re-enable the HA integration. If the charger doesn't pop up after
+      ~30 s, unplug it for 10 s and plug it back in.
+  Whoever connects first wins; some firmwares hold the
+  *not-advertising* state until a power cycle.
 - **Diagnostics** (Device page → ⋮ → Download diagnostics) redacts the token
   and MAC.
 
