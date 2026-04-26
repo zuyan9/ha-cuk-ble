@@ -32,11 +32,10 @@ class AD1204USwitchDescription(SwitchEntityDescription):
 
 SWITCHES: tuple[AD1204USwitchDescription, ...] = (
     AD1204USwitchDescription(
-        key="usb_a_always_on",
-        translation_key="usb_a_always_on",
+        key="usb_a_trickle_charging",
+        translation_key="usb_a_trickle_charging",
         siid=2,
         piid=0x000F,
-        kind="bool",
         getter=lambda data: data.usb_a_always_on,
     ),
     AD1204USwitchDescription(
@@ -64,9 +63,15 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(
-        AD1204USwitch(coordinator, description=desc) for desc in SWITCHES
-    )
+    
+    entities: list[AD1204UEntity] = []
+    for desc in SWITCHES:
+        entities.append(AD1204USwitch(coordinator, description=desc))
+    
+    for desc in PORT_SWITCHES:
+        entities.append(AD1204UPortSwitch(coordinator, description=desc))
+        
+    async_add_entities(entities)
 
 
 class AD1204USwitch(AD1204UEntity, SwitchEntity):
@@ -106,3 +111,74 @@ class AD1204USwitch(AD1204UEntity, SwitchEntity):
             self.entity_description.piid,
             payload,
         )
+
+@dataclass(frozen=True, kw_only=True)
+class AD1204UPortSwitchDescription(SwitchEntityDescription):
+    bit_index: int
+
+
+PORT_SWITCHES: tuple[AD1204UPortSwitchDescription, ...] = (
+    AD1204UPortSwitchDescription(
+        key="port_c1_power",
+        translation_key="port_c1_power",
+        bit_index=0,
+    ),
+    AD1204UPortSwitchDescription(
+        key="port_c2_power",
+        translation_key="port_c2_power",
+        bit_index=1,
+    ),
+    AD1204UPortSwitchDescription(
+        key="port_c3_power",
+        translation_key="port_c3_power",
+        bit_index=2,
+    ),
+    AD1204UPortSwitchDescription(
+        key="port_a_power",
+        translation_key="port_a_power",
+        bit_index=3,
+    ),
+)
+
+
+class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
+    entity_description: AD1204UPortSwitchDescription
+
+    def __init__(
+        self,
+        coordinator: AD1204UCoordinator,
+        *,
+        description: AD1204UPortSwitchDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.address}_{description.key}"
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        if data is None or data.port_ctl is None:
+            return None
+        return (data.port_ctl & (1 << self.entity_description.bit_index)) > 0
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self._write(True)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self._write(False)
+
+    async def _write(self, value: bool) -> None:
+        data = self.coordinator.data
+        if data is None or data.port_ctl is None:
+            return
+        
+        current_mask = data.port_ctl
+        if value:
+            new_mask = current_mask | (1 << self.entity_description.bit_index)
+        else:
+            new_mask = current_mask & ~(1 << self.entity_description.bit_index)
+            
+        await self.coordinator.async_set_property(2, 0x0010, new_mask)
+        # Optimistically update the state so the UI reacts immediately.
+        data.port_ctl = new_mask
+        self.async_write_ha_state()

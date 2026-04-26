@@ -89,9 +89,13 @@
       }
     },
     "switch": {
-      "usb_a_always_on": {"name": "USB-A always on"},
+      "usb_a_trickle_charging": {"name": "USB-A trickle charging"},
       "screenoff_while_idle": {"name": "Screen off when idle"},
-      "screen_dir_lock": {"name": "Lock screen orientation"}
+      "screen_dir_lock": {"name": "Lock screen orientation"},
+      "port_c1_power": {"name": "Port C1 power"},
+      "port_c2_power": {"name": "Port C2 power"},
+      "port_c3_power": {"name": "Port C3 power"},
+      "port_a_power": {"name": "Port A power"}
     },
     "select": {
       "scene_mode": {
@@ -101,6 +105,16 @@
           "hybrid": "Hybrid",
           "single": "Single",
           "dual": "Dual"
+        }
+      },
+      "screen_save_time": {
+        "name": "Screen on time",
+        "state": {
+          "1_min": "1 Min",
+          "5_min": "5 Min",
+          "10_min": "10 Min",
+          "30_min": "30 Min",
+          "always_on": "Always-On"
         }
       }
     }
