@@ -200,6 +200,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         # Use async_refresh (immediate) rather than async_request_refresh
         # (debounced) so entity state mirrors the write before the service
         # call returns to the HA client.
+        await asyncio.sleep(0.25)
         await self.async_refresh()
 
     # ----------------------------------------------------------- polling

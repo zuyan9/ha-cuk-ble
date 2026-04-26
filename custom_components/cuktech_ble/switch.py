@@ -180,5 +180,6 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
             
         await self.coordinator.async_set_property(2, 0x0010, new_mask)
         # Optimistically update the state so the UI reacts immediately.
-        data.port_ctl = new_mask
+        if self.coordinator.data is not None:
+            self.coordinator.data.port_ctl = new_mask
         self.async_write_ha_state()
