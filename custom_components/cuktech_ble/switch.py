@@ -118,7 +118,6 @@ class AD1204USwitch(AD1204UEntity, SwitchEntity):
 @dataclass(frozen=True, kw_only=True)
 class AD1204UPortSwitchDescription(SwitchEntityDescription):
     bit_index: int
-    port: str
 
 
 PORT_SWITCHES: tuple[AD1204UPortSwitchDescription, ...] = (
@@ -126,25 +125,21 @@ PORT_SWITCHES: tuple[AD1204UPortSwitchDescription, ...] = (
         key="port_c1_power",
         translation_key="port_c1_power",
         bit_index=0,
-        port="c1",
     ),
     AD1204UPortSwitchDescription(
         key="port_c2_power",
         translation_key="port_c2_power",
         bit_index=1,
-        port="c2",
     ),
     AD1204UPortSwitchDescription(
         key="port_c3_power",
         translation_key="port_c3_power",
         bit_index=2,
-        port="c3",
     ),
     AD1204UPortSwitchDescription(
         key="port_a_power",
         translation_key="port_a_power",
         bit_index=3,
-        port="a",
     ),
 )
 
@@ -158,7 +153,7 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
         *,
         description: AD1204UPortSwitchDescription,
     ) -> None:
-        super().__init__(coordinator, port=description.port)
+        super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.address}_{description.key}"
 
