@@ -125,14 +125,20 @@
             "c2_pps_protocol": {
                 "name": "Port C2 PPS Protocol"
             },
-            "c3_pd_protocol": {
-                "name": "Port C3 PD Protocol"
+            "c2_ufcs_protocol": {
+                "name": "Port C2 UFCS Protocol"
             },
-            "c3_pps_protocol": {
-                "name": "Port C3 PPS Protocol"
+            "c3_ufcs_protocol": {
+                "name": "Port C3 UFCS Protocol"
+            },
+            "c3_scp_protocol": {
+                "name": "Port C3 SCP Protocol"
             },
             "a_ufcs_protocol": {
                 "name": "Port A UFCS Protocol"
+            },
+            "a_scp_protocol": {
+                "name": "Port A SCP Protocol"
             }
         },
         "select": {

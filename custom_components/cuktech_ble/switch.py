@@ -250,20 +250,42 @@ PROTOCOL_SWITCHES: tuple[AD1204UProtocolSwitchDescription, ...] = (
         bit_index=1,
         port="c2",
     ),
+    AD1204UProtocolSwitchDescription(
+        key="c2_ufcs_protocol",
+        translation_key="c2_ufcs_protocol",
+        byte_index=1,
+        bit_index=2,
+        port="c2",
+    ),
     # C3 Toggles
     AD1204UProtocolSwitchDescription(
-        key="c3_pd_protocol",
-        translation_key="c3_pd_protocol",
+        key="c3_ufcs_protocol",
+        translation_key="c3_ufcs_protocol",
         byte_index=2,
         bit_index=0,
         port="c3",
     ),
     AD1204UProtocolSwitchDescription(
-        key="c3_pps_protocol",
-        translation_key="c3_pps_protocol",
+        key="c3_scp_protocol",
+        translation_key="c3_scp_protocol",
         byte_index=2,
         bit_index=1,
         port="c3",
+    ),
+    # A Toggles
+    AD1204UProtocolSwitchDescription(
+        key="a_ufcs_protocol",
+        translation_key="a_ufcs_protocol",
+        byte_index=3,
+        bit_index=0,
+        port="a",
+    ),
+    AD1204UProtocolSwitchDescription(
+        key="a_scp_protocol",
+        translation_key="a_scp_protocol",
+        byte_index=3,
+        bit_index=1,
+        port="a",
     ),
 )
 
