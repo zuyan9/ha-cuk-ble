@@ -175,6 +175,31 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             _LOGGER.info("AD1204U %s disconnected", self.address)
 
     # ------------------------------------------------------------ writes
+    def set_port_power(self, mask: int) -> None:
+        self._optimistic_port_ctl = mask
+        
+        if hasattr(self, "_port_ctl_task") and self._port_ctl_task is not None and not self._port_ctl_task.done():
+            self._port_ctl_task.cancel()
+            
+        async def debounced_writer(target_mask: int):
+            await asyncio.sleep(0.15) # Wait for concurrent API calls to settle
+            try:
+                # We do the BLE write synchronously with respect to other BLE traffic
+                async with self._lock:
+                    session = await self._ensure_connected()
+                    await set_property(session, 2, 0x0010, target_mask, u32=False)
+                    self._last_success_ts = asyncio.get_event_loop().time()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                _LOGGER.error(f"Failed to write port_ctl mask {target_mask}: {e}")
+                if hasattr(self, "_optimistic_port_ctl"):
+                    delattr(self, "_optimistic_port_ctl")
+                    
+        self._port_ctl_task = self.hass.async_create_background_task(
+            debounced_writer(mask), name=f"ad1204u_port_ctl_{self.address}"
+        )
+
     async def async_set_property(
         self,
         siid: int,
