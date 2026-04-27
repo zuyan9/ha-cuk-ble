@@ -192,7 +192,7 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
         self.async_write_ha_state()
 
         try:
-            self.coordinator.set_port_power(new_mask)
+            await self.coordinator.async_set_property(2, 0x0010, new_mask, u32=False)
         except Exception:
             # Revert optimistic update on failure (async_refresh will also fix it later)
             data.port_ctl = current_mask

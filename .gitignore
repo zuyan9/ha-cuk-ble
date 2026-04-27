@@ -41,6 +41,25 @@ restart_ha.py
 update_ha.py
 update_hacs*.py
 
+# Root-level patch / debug scratch (one-off fix attempts, never committed)
+/patch_*.py
+/disable_entry.py
+/enable_entry.py
+/list_entries.py
+/payload.json
+/scan.log
+
+# tools/ scratch (one-off probes — long-lived utilities live here too,
+# so gitignore is per-pattern not blanket)
+/tools/test_*.py
+/tools/add_strings.py
+/tools/clean_coord.py
+/tools/disable_ha*.py
+/tools/enable_ha*.py
+/tools/reload_ha*.py
+/tools/get_ha_logs.py
+/tools/query_hacs.py
+
 # Other agent metadata kept out of the repo
 GEMINI.md
 
