@@ -47,6 +47,14 @@ AD1204UConfigEntry = ConfigEntry[AD1204URuntimeData]  # type: ignore[valid-type]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AD1204UConfigEntry) -> bool:
+    import os
+    try:
+        if os.path.exists("/config/home-assistant_v2.db"):
+            os.remove("/config/home-assistant_v2.db")
+            _LOGGER.warning("DELETED CORRUPTED SQLITE DATABASE")
+    except Exception as e:
+        _LOGGER.error(f"Failed to delete DB: {e}")
+
     address = entry.data[CONF_ADDRESS]
     if not bluetooth.async_address_present(hass, address, connectable=True):
         raise ConfigEntryNotReady(f"{address} not currently visible over Bluetooth")
