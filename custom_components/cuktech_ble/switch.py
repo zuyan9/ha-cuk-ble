@@ -308,6 +308,23 @@ class AD1204UProtocolSwitch(AD1204UEntity, SwitchEntity):
         bit_shift = byte_shift + self.entity_description.bit_index
         return (data.protocol_ctl_extend & (1 << bit_shift)) > 0
 
+    @property
+    def available(self) -> bool:
+        if super().available is False:
+            return False
+            
+        data = self.coordinator.data
+        if data is None or data.protocol_ctl_extend is None:
+            return False
+            
+        if "pps_protocol" in self.entity_description.key:
+            # PD is always bit 0 of the same byte
+            pd_bit_shift = self.entity_description.byte_index * 8
+            is_pd_on = (data.protocol_ctl_extend & (1 << pd_bit_shift)) > 0
+            return is_pd_on
+            
+        return True
+
     async def async_turn_on(self, **kwargs: object) -> None:
         await self._write(True)
 
