@@ -108,7 +108,7 @@
                 "name": "Port C3 power"
             },
             "port_a_power": {
-                "name": "Port A power"
+                "name": "Port USB-A power"
             },
             "c1_pd_protocol": {
                 "name": "Port C1 PD Protocol"
