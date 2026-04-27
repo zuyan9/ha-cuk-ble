@@ -23,6 +23,11 @@ class AD1204UEntity(CoordinatorEntity[AD1204UCoordinator]):
         super().__init__(coordinator)
         parent_id = (DOMAIN, coordinator.address)
         parent_name = DEFAULT_DEVICE_NAME
+        
+        # Hardcoding the known firmware version for now since dynamic BLE fetching of siid=1
+        # frequently crashes the connection stack on this particular firmware revision.
+        fw_version = "2.1.2_0073"
+        
         if port is None:
             self._attr_device_info = DeviceInfo(
                 identifiers={parent_id},
@@ -30,6 +35,7 @@ class AD1204UEntity(CoordinatorEntity[AD1204UCoordinator]):
                 name=parent_name,
                 manufacturer=MANUFACTURER,
                 model=MODEL,
+                sw_version=fw_version,
             )
         else:
             label = PORT_LABELS.get(port, port.upper())
@@ -39,4 +45,5 @@ class AD1204UEntity(CoordinatorEntity[AD1204UCoordinator]):
                 manufacturer=MANUFACTURER,
                 model=f"{MODEL} {label}",
                 via_device=parent_id,
+                sw_version=fw_version,
             )

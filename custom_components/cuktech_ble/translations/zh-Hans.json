@@ -16,8 +16,8 @@
             "cloud_unknown": "Unknown cloud error."
         },
         "progress": {
-            "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan\u2026",
-            "fetching_devices": "Fetching device list from the Xiaomi cloud\u2026"
+            "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan…",
+            "fetching_devices": "Fetching device list from the Xiaomi cloud…"
         },
         "step": {
             "bluetooth_confirm": {
@@ -29,11 +29,11 @@
                 }
             },
             "method": {
-                "title": "Choose how to provide the BLE token",
-                "description": "The CUKTECH AD1204U needs a 12-byte BLE token before it can be read. You can fetch it automatically from your Xiaomi account, or paste one you already have.",
+                "title": "选择如何提供蓝牙 Token",
+                "description": "CUKTECH AD1204U 需要一个 12 字节的蓝牙 Token。您可以从小米云端自动获取，或者手动输入。",
                 "menu_options": {
-                    "cloud": "Fetch from Xiaomi cloud (QR login)",
-                    "manual": "Enter token manually"
+                    "cloud": "从小米云端获取 (扫码登录)",
+                    "manual": "手动输入 Token"
                 }
             },
             "cloud_region": {
@@ -90,25 +90,25 @@
         },
         "switch": {
             "usb_a_trickle_charging": {
-                "name": "USB-A trickle charging"
+                "name": "USB-A 小电流充电"
             },
             "screenoff_while_idle": {
-                "name": "Screen off when idle"
+                "name": "空闲时息屏"
             },
             "screen_dir_lock": {
-                "name": "Lock screen orientation"
+                "name": "锁定屏幕方向"
             },
             "port_c1_power": {
-                "name": "Port C1 power"
+                "name": "C1 端口电源"
             },
             "port_c2_power": {
-                "name": "Port C2 power"
+                "name": "C2 端口电源"
             },
             "port_c3_power": {
-                "name": "Port C3 power"
+                "name": "C3 端口电源"
             },
             "port_a_power": {
-                "name": "Port A power"
+                "name": "USB-A 端口电源"
             },
             "c1_pd_protocol": {
                 "name": "Port C1 PD Protocol"
@@ -143,29 +143,29 @@
         },
         "select": {
             "scene_mode": {
-                "name": "Scene mode",
+                "name": "场景模式",
                 "state": {
-                    "ai_mode": "AI Mode",
-                    "hybrid": "Hybrid",
-                    "single": "Single",
-                    "dual": "Dual"
+                    "ai_mode": "AI 模式",
+                    "hybrid": "混合",
+                    "single": "单口",
+                    "dual": "双口"
                 }
             },
             "screen_save_time": {
-                "name": "Screen on time",
+                "name": "息屏时间",
                 "state": {
-                    "1_min": "1 Min",
-                    "5_min": "5 Min",
-                    "10_min": "10 Min",
-                    "30_min": "30 Min",
-                    "always_on": "Always-On"
+                    "1_min": "1 分钟",
+                    "5_min": "5 分钟",
+                    "10_min": "10 分钟",
+                    "30_min": "30 分钟",
+                    "always_on": "常亮"
                 }
             },
             "device_language": {
-                "name": "Device language",
+                "name": "设备语言",
                 "state": {
-                    "english": "English",
-                    "chinese": "Chinese"
+                    "english": "英文",
+                    "chinese": "中文"
                 }
             }
         }

@@ -24,6 +24,13 @@ SCREEN_SAVE_TIME_PIID = 0x0006
 SCREEN_SAVE_TIME_BY_VALUE: dict[int, str] = {1: "1_min", 5: "5_min", 10: "10_min", 30: "30_min", 0: "always_on"}
 SCREEN_SAVE_TIME_BY_KEY: dict[str, int] = {v: k for k, v in SCREEN_SAVE_TIME_BY_VALUE.items()}
 
+# device_language enum reversed from Mi Home tablet capture:
+# 0 = English, 1 = Chinese.
+DEVICE_LANGUAGE_SIID = 2
+DEVICE_LANGUAGE_PIID = 0x000d
+DEVICE_LANGUAGE_BY_VALUE: dict[int, str] = {0: "english", 1: "chinese"}
+DEVICE_LANGUAGE_BY_KEY: dict[str, int] = {v: k for k, v in DEVICE_LANGUAGE_BY_VALUE.items()}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -33,7 +40,8 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     async_add_entities([
         AD1204USceneModeSelect(coordinator),
-        AD1204UScreenSaveTimeSelect(coordinator)
+        AD1204UScreenSaveTimeSelect(coordinator),
+        AD1204UDeviceLanguageSelect(coordinator),
     ])
 
 
@@ -85,4 +93,29 @@ class AD1204UScreenSaveTimeSelect(AD1204UEntity, SelectEntity):
         value = SCREEN_SAVE_TIME_BY_KEY[option]
         await self.coordinator.async_set_property(
             SCREEN_SAVE_TIME_SIID, SCREEN_SAVE_TIME_PIID, value
+        )
+
+class AD1204UDeviceLanguageSelect(AD1204UEntity, SelectEntity):
+    _attr_translation_key = "device_language"
+    _attr_options = list(DEVICE_LANGUAGE_BY_VALUE.values())
+
+    def __init__(self, coordinator: AD1204UCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_device_language"
+        self.entity_description = SelectEntityDescription(
+            key="device_language",
+            translation_key="device_language",
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        data = self.coordinator.data
+        if data is None or data.device_language is None:
+            return None
+        return DEVICE_LANGUAGE_BY_VALUE.get(data.device_language)
+
+    async def async_select_option(self, option: str) -> None:
+        value = DEVICE_LANGUAGE_BY_KEY[option]
+        await self.coordinator.async_set_property(
+            DEVICE_LANGUAGE_SIID, DEVICE_LANGUAGE_PIID, value
         )

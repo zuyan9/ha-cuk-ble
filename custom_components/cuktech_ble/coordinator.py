@@ -47,6 +47,7 @@ class AD1204UData:
     pdo_caps_w: dict[str, int | None] = field(default_factory=dict)
     scene_mode: int | None = None
     screen_save_time: int | None = None
+    device_language: int | None = None
     port_ctl: int | None = None
     protocol_ctl: int | None = None
     protocol_ctl_extend: int | None = None
@@ -288,6 +289,7 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         port_ctl=_u8(0x10),
         protocol_ctl=_u8(0x07),
         protocol_ctl_extend=_u32(0x15),
+        device_language=_u8(0x0d),
         usb_a_always_on=_bool(0x0f),
         screenoff_while_idle=_bool(0x13),
         screen_dir_lock=_bool(0x14),
