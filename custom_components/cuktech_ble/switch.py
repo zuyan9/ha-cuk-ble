@@ -252,13 +252,6 @@ PROTOCOL_SWITCHES: tuple[AD1204UProtocolSwitchDescription, ...] = (
         byte_index=2,
         bit_index=1,
     ),
-    # A Toggles
-    AD1204UProtocolSwitchDescription(
-        key="a_ufcs_protocol",
-        translation_key="a_ufcs_protocol",
-        byte_index=3,
-        bit_index=2,
-    ),
 )
 
 
