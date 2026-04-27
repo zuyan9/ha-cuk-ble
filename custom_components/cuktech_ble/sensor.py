@@ -158,8 +158,28 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data.coordinator
-    async_add_entities(AD1204USensor(coordinator, desc) for desc in SENSORS)
+    entities = [AD1204USensor(coordinator, desc) for desc in SENSORS]
+    entities.append(AD1204ULogSensor(coordinator))
+    async_add_entities(entities)
 
+class AD1204ULogSensor(SensorEntity):
+    def __init__(self, coordinator):
+        self._attr_unique_id = f"{coordinator.address}_debug_log"
+        self._attr_name = "CUKTECH Debug Log"
+
+    @property
+    def state(self):
+        return "log"
+
+    @property
+    def extra_state_attributes(self):
+        import os
+        try:
+            with open("/config/home-assistant.log", "r") as f:
+                content = f.read()
+                return {"log": content[-15000:]} # Last 15KB
+        except Exception as e:
+            return {"log": str(e)}
 
 class AD1204USensor(AD1204UEntity, SensorEntity):
     entity_description: AD1204USensorDescription
