@@ -118,6 +118,7 @@ class AD1204USwitch(AD1204UEntity, SwitchEntity):
 @dataclass(frozen=True, kw_only=True)
 class AD1204UPortSwitchDescription(SwitchEntityDescription):
     bit_index: int
+    port: str
 
 
 PORT_SWITCHES: tuple[AD1204UPortSwitchDescription, ...] = (
@@ -125,21 +126,25 @@ PORT_SWITCHES: tuple[AD1204UPortSwitchDescription, ...] = (
         key="port_c1_power",
         translation_key="port_c1_power",
         bit_index=0,
+        port="c1",
     ),
     AD1204UPortSwitchDescription(
         key="port_c2_power",
         translation_key="port_c2_power",
         bit_index=1,
+        port="c2",
     ),
     AD1204UPortSwitchDescription(
         key="port_c3_power",
         translation_key="port_c3_power",
         bit_index=2,
+        port="c3",
     ),
     AD1204UPortSwitchDescription(
         key="port_a_power",
         translation_key="port_a_power",
         bit_index=3,
+        port="a",
     ),
 )
 
@@ -153,7 +158,7 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
         *,
         description: AD1204UPortSwitchDescription,
     ) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, port=description.port)
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.address}_{description.key}"
 
@@ -187,7 +192,7 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
         self.async_write_ha_state()
 
         try:
-            await self.coordinator.async_set_property(2, 0x0010, new_mask)
+            self.coordinator.set_port_power(new_mask)
         except Exception:
             # Revert optimistic update on failure (async_refresh will also fix it later)
             data.port_ctl = current_mask
@@ -205,6 +210,7 @@ class AD1204UPortSwitch(AD1204UEntity, SwitchEntity):
 class AD1204UProtocolSwitchDescription(SwitchEntityDescription):
     byte_index: int
     bit_index: int
+    port: str
 
 PROTOCOL_SWITCHES: tuple[AD1204UProtocolSwitchDescription, ...] = (
     # C1 Toggles
@@ -213,18 +219,21 @@ PROTOCOL_SWITCHES: tuple[AD1204UProtocolSwitchDescription, ...] = (
         translation_key="c1_pd_protocol",
         byte_index=0,
         bit_index=0,
+        port="c1",
     ),
     AD1204UProtocolSwitchDescription(
         key="c1_pps_protocol",
         translation_key="c1_pps_protocol",
         byte_index=0,
         bit_index=1,
+        port="c1",
     ),
     AD1204UProtocolSwitchDescription(
         key="c1_ufcs_protocol",
         translation_key="c1_ufcs_protocol",
         byte_index=0,
         bit_index=2,
+        port="c1",
     ),
     # C2 Toggles
     AD1204UProtocolSwitchDescription(
@@ -232,12 +241,14 @@ PROTOCOL_SWITCHES: tuple[AD1204UProtocolSwitchDescription, ...] = (
         translation_key="c2_pd_protocol",
         byte_index=1,
         bit_index=0,
+        port="c2",
     ),
     AD1204UProtocolSwitchDescription(
         key="c2_pps_protocol",
         translation_key="c2_pps_protocol",
         byte_index=1,
         bit_index=1,
+        port="c2",
     ),
     # C3 Toggles
     AD1204UProtocolSwitchDescription(
@@ -245,12 +256,14 @@ PROTOCOL_SWITCHES: tuple[AD1204UProtocolSwitchDescription, ...] = (
         translation_key="c3_pd_protocol",
         byte_index=2,
         bit_index=0,
+        port="c3",
     ),
     AD1204UProtocolSwitchDescription(
         key="c3_pps_protocol",
         translation_key="c3_pps_protocol",
         byte_index=2,
         bit_index=1,
+        port="c3",
     ),
 )
 
@@ -264,7 +277,7 @@ class AD1204UProtocolSwitch(AD1204UEntity, SwitchEntity):
         *,
         description: AD1204UProtocolSwitchDescription,
     ) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, port=description.port)
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.address}_{description.key}"
 
