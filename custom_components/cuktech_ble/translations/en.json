@@ -1,134 +1,172 @@
 {
-  "config": {
-    "abort": {
-      "already_configured": "This CUKTECH AD1204U is already configured.",
-      "no_devices_found": "No CUKTECH AD1204U chargers were found.",
-      "not_supported": "This Bluetooth device is not a CUKTECH AD1204U.",
-      "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login."
+    "config": {
+        "abort": {
+            "already_configured": "This CUKTECH AD1204U is already configured.",
+            "no_devices_found": "No CUKTECH AD1204U chargers were found.",
+            "not_supported": "This Bluetooth device is not a CUKTECH AD1204U.",
+            "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login."
+        },
+        "error": {
+            "token_not_hex": "Token must be a hex string.",
+            "token_wrong_length": "Token must decode to 12 bytes (24 hex characters).",
+            "cloud_qr_failed": "QR login failed or timed out. Please try again.",
+            "cloud_qr_cancelled": "QR login was cancelled.",
+            "cloud_fetch_failed": "Could not fetch the device list from the Xiaomi cloud.",
+            "cloud_device_not_found": "This charger was not found in the selected Xiaomi region. Try a different region.",
+            "cloud_unknown": "Unknown cloud error."
+        },
+        "progress": {
+            "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan\u2026",
+            "fetching_devices": "Fetching device list from the Xiaomi cloud\u2026"
+        },
+        "step": {
+            "bluetooth_confirm": {
+                "description": "Set up {name}."
+            },
+            "user": {
+                "data": {
+                    "address": "Device"
+                }
+            },
+            "method": {
+                "title": "Choose how to provide the BLE token",
+                "description": "The CUKTECH AD1204U needs a 12-byte BLE token before it can be read. You can fetch it automatically from your Xiaomi account, or paste one you already have.",
+                "menu_options": {
+                    "cloud": "Fetch from Xiaomi cloud (QR login)",
+                    "manual": "Enter token manually"
+                }
+            },
+            "cloud_region": {
+                "title": "Xiaomi account region",
+                "description": "Pick the region your Mi Home account is registered in. If unsure, try **cn** first, then **de** or **sg**.",
+                "data": {
+                    "region": "Region"
+                }
+            },
+            "cloud_qr": {
+                "title": "Scan with the Mi Home app",
+                "description": "Open the Mi Home app, tap the scan icon, and scan the QR code below.\n\n![QR code]({qr_url})"
+            },
+            "cloud_error": {
+                "title": "Cloud login problem",
+                "description": "Something went wrong: **{reason}**.\n\nSubmit to go back and try again."
+            },
+            "token": {
+                "title": "Enter BLE token for {name}",
+                "description": "Paste the 24-character (12-byte) hex token for this device. You can fetch it from your Xiaomi account using the tools/ad1204u_fetch_token.py script shipped with this integration.",
+                "data": {
+                    "token": "BLE token (hex)"
+                }
+            }
+        }
     },
-    "error": {
-      "token_not_hex": "Token must be a hex string.",
-      "token_wrong_length": "Token must decode to 12 bytes (24 hex characters).",
-      "cloud_qr_failed": "QR login failed or timed out. Please try again.",
-      "cloud_qr_cancelled": "QR login was cancelled.",
-      "cloud_fetch_failed": "Could not fetch the device list from the Xiaomi cloud.",
-      "cloud_device_not_found": "This charger was not found in the selected Xiaomi region. Try a different region.",
-      "cloud_unknown": "Unknown cloud error."
+    "selector": {
+        "cloud_region": {
+            "options": {
+                "cn": "China (cn)",
+                "de": "Europe (de)",
+                "us": "United States (us)",
+                "ru": "Russia (ru)",
+                "tw": "Taiwan (tw)",
+                "sg": "Singapore (sg)",
+                "in": "India (in)",
+                "i2": "India alt (i2)"
+            }
+        }
     },
-    "progress": {
-      "waiting_for_scan": "Open the Mi Home app, tap the scan icon, and scan this QR code:\n\n![QR code]({qr_url})\n\nWaiting for scan\u2026",
-      "fetching_devices": "Fetching device list from the Xiaomi cloud\u2026"
+    "entity": {
+        "sensor": {
+            "port_protocol": {
+                "state": {
+                    "idle": "Idle",
+                    "pd": "PD",
+                    "pd_fixed": "PD Fixed",
+                    "pd_pps": "PD PPS",
+                    "usb_a": "USB-A",
+                    "usb_a_qc": "USB-A (QC)",
+                    "unknown": "Unknown"
+                }
+            }
+        },
+        "switch": {
+            "usb_a_trickle_charging": {
+                "name": "USB-A trickle charging"
+            },
+            "screenoff_while_idle": {
+                "name": "Screen off when idle"
+            },
+            "screen_dir_lock": {
+                "name": "Lock screen orientation"
+            },
+            "port_c1_power": {
+                "name": "Port C1 power"
+            },
+            "port_c2_power": {
+                "name": "Port C2 power"
+            },
+            "port_c3_power": {
+                "name": "Port C3 power"
+            },
+            "port_a_power": {
+                "name": "Port A power"
+            },
+            "c1_pd_protocol": {
+                "name": "Port C1 PD Protocol"
+            },
+            "c1_pps_protocol": {
+                "name": "Port C1 PPS Protocol"
+            },
+            "c1_ufcs_protocol": {
+                "name": "Port C1 UFCS Protocol"
+            },
+            "c2_pd_protocol": {
+                "name": "Port C2 PD Protocol"
+            },
+            "c2_pps_protocol": {
+                "name": "Port C2 PPS Protocol"
+            },
+            "c3_pd_protocol": {
+                "name": "Port C3 PD Protocol"
+            },
+            "c3_pps_protocol": {
+                "name": "Port C3 PPS Protocol"
+            },
+            "a_ufcs_protocol": {
+                "name": "Port A UFCS Protocol"
+            }
+        },
+        "select": {
+            "scene_mode": {
+                "name": "Scene mode",
+                "state": {
+                    "ai_mode": "AI Mode",
+                    "hybrid": "Hybrid",
+                    "single": "Single",
+                    "dual": "Dual"
+                }
+            },
+            "screen_save_time": {
+                "name": "Screen on time",
+                "state": {
+                    "1_min": "1 Min",
+                    "5_min": "5 Min",
+                    "10_min": "10 Min",
+                    "30_min": "30 Min",
+                    "always_on": "Always-On"
+                }
+            }
+        }
     },
-    "step": {
-      "bluetooth_confirm": {
-        "description": "Set up {name}."
-      },
-      "user": {
-        "data": {
-          "address": "Device"
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "update_period": "Polling interval (seconds)",
+                    "idle_release": "Release BLE connection after idle (seconds, 0 = keep connected)",
+                    "connection_timeout": "Connection timeout (seconds)",
+                    "bluez_start_notify": "Use BlueZ start-notify hint (Linux)"
+                }
+            }
         }
-      },
-      "method": {
-        "title": "Choose how to provide the BLE token",
-        "description": "The CUKTECH AD1204U needs a 12-byte BLE token before it can be read. You can fetch it automatically from your Xiaomi account, or paste one you already have.",
-        "menu_options": {
-          "cloud": "Fetch from Xiaomi cloud (QR login)",
-          "manual": "Enter token manually"
-        }
-      },
-      "cloud_region": {
-        "title": "Xiaomi account region",
-        "description": "Pick the region your Mi Home account is registered in. If unsure, try **cn** first, then **de** or **sg**.",
-        "data": {
-          "region": "Region"
-        }
-      },
-      "cloud_qr": {
-        "title": "Scan with the Mi Home app",
-        "description": "Open the Mi Home app, tap the scan icon, and scan the QR code below.\n\n![QR code]({qr_url})"
-      },
-      "cloud_error": {
-        "title": "Cloud login problem",
-        "description": "Something went wrong: **{reason}**.\n\nSubmit to go back and try again."
-      },
-      "token": {
-        "title": "Enter BLE token for {name}",
-        "description": "Paste the 24-character (12-byte) hex token for this device. You can fetch it from your Xiaomi account using the tools/ad1204u_fetch_token.py script shipped with this integration.",
-        "data": {
-          "token": "BLE token (hex)"
-        }
-      }
     }
-  },
-  "selector": {
-    "cloud_region": {
-      "options": {
-        "cn": "China (cn)",
-        "de": "Europe (de)",
-        "us": "United States (us)",
-        "ru": "Russia (ru)",
-        "tw": "Taiwan (tw)",
-        "sg": "Singapore (sg)",
-        "in": "India (in)",
-        "i2": "India alt (i2)"
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "port_protocol": {
-        "state": {
-          "idle": "Idle",
-          "pd": "PD",
-          "pd_fixed": "PD Fixed",
-          "pd_pps": "PD PPS",
-          "usb_a": "USB-A",
-          "usb_a_qc": "USB-A (QC)",
-          "unknown": "Unknown"
-        }
-      }
-    },
-    "switch": {
-      "usb_a_trickle_charging": {"name": "USB-A trickle charging"},
-      "screenoff_while_idle": {"name": "Screen off when idle"},
-      "screen_dir_lock": {"name": "Lock screen orientation"},
-      "port_c1_power": {"name": "Port C1 power"},
-      "port_c2_power": {"name": "Port C2 power"},
-      "port_c3_power": {"name": "Port C3 power"},
-      "port_a_power": {"name": "Port A power"}
-    },
-    "select": {
-      "scene_mode": {
-        "name": "Scene mode",
-        "state": {
-          "ai_mode": "AI Mode",
-          "hybrid": "Hybrid",
-          "single": "Single",
-          "dual": "Dual"
-        }
-      },
-      "screen_save_time": {
-        "name": "Screen on time",
-        "state": {
-          "1_min": "1 Min",
-          "5_min": "5 Min",
-          "10_min": "10 Min",
-          "30_min": "30 Min",
-          "always_on": "Always-On"
-        }
-      }
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "data": {
-          "update_period": "Polling interval (seconds)",
-          "idle_release": "Release BLE connection after idle (seconds, 0 = keep connected)",
-          "connection_timeout": "Connection timeout (seconds)",
-          "bluez_start_notify": "Use BlueZ start-notify hint (Linux)"
-        }
-      }
-    }
-  }
 }

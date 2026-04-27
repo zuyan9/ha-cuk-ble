@@ -48,6 +48,8 @@ class AD1204UData:
     scene_mode: int | None = None
     screen_save_time: int | None = None
     port_ctl: int | None = None
+    protocol_ctl: int | None = None
+    protocol_ctl_extend: int | None = None
     usb_a_always_on: bool | None = None
     screenoff_while_idle: bool | None = None
     screen_dir_lock: bool | None = None
@@ -284,6 +286,8 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         scene_mode=_u8(5),
         screen_save_time=_u8(6),
         port_ctl=_u8(0x10),
+        protocol_ctl=_u8(0x07),
+        protocol_ctl_extend=_u32(0x15),
         usb_a_always_on=_bool(0x0f),
         screenoff_while_idle=_bool(0x13),
         screen_dir_lock=_bool(0x14),
