@@ -90,7 +90,7 @@
         },
         "switch": {
             "usb_a_trickle_charging": {
-                "name": "USB-A 小电流充电"
+                "name": "USB-A小电流"
             },
             "screenoff_while_idle": {
                 "name": "空闲时息屏"
@@ -99,60 +99,60 @@
                 "name": "锁定屏幕方向"
             },
             "port_c1_power": {
-                "name": "C1 端口电源"
+                "name": "C1电源"
             },
             "port_c2_power": {
-                "name": "C2 端口电源"
+                "name": "C2电源"
             },
             "port_c3_power": {
-                "name": "C3 端口电源"
+                "name": "C3电源"
             },
             "port_a_power": {
-                "name": "USB-A 端口电源"
+                "name": "USB-A电源"
             },
             "c1_pd_protocol": {
-                "name": "Port C1 PD Protocol"
+                "name": "C1 PD协议"
             },
             "c1_pps_protocol": {
-                "name": "Port C1 PPS Protocol"
+                "name": "C1 PPS协议"
             },
             "c1_ufcs_protocol": {
-                "name": "Port C1 UFCS Protocol"
+                "name": "C1 UFCS协议"
             },
             "c2_pd_protocol": {
-                "name": "Port C2 PD Protocol"
+                "name": "C2 PD协议"
             },
             "c2_pps_protocol": {
-                "name": "Port C2 PPS Protocol"
+                "name": "C2 PPS协议"
             },
             "c2_ufcs_protocol": {
-                "name": "Port C2 UFCS Protocol"
+                "name": "C2 UFCS协议"
             },
             "c3_ufcs_protocol": {
-                "name": "Port C3 UFCS Protocol"
+                "name": "C3 UFCS协议"
             },
             "c3_scp_protocol": {
-                "name": "Port C3 SCP Protocol"
+                "name": "C3 SCP协议"
             },
             "a_ufcs_protocol": {
-                "name": "Port A UFCS Protocol"
+                "name": "USB-A UFCS协议"
             },
             "a_scp_protocol": {
-                "name": "Port A SCP Protocol"
+                "name": "USB-A SCP协议"
             }
         },
         "select": {
             "scene_mode": {
                 "name": "场景模式",
                 "state": {
-                    "ai_mode": "AI 模式",
-                    "hybrid": "混合",
-                    "single": "单口",
-                    "dual": "双口"
+                    "ai_mode": "AI智能",
+                    "hybrid": "数码生态",
+                    "single": "极速单充",
+                    "dual": "均衡输出"
                 }
             },
             "screen_save_time": {
-                "name": "息屏时间",
+                "name": "屏幕设定",
                 "state": {
                     "1_min": "1 分钟",
                     "5_min": "5 分钟",
