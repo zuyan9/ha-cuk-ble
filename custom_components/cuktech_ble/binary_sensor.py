@@ -37,7 +37,6 @@ BINARY_SENSORS: tuple[AD1204UBinarySensorDescription, ...] = tuple(
     AD1204UBinarySensorDescription(
         key=f"{port}_in_use",
         translation_key="port_in_use",
-        name="In use",
         device_class=BinarySensorDeviceClass.POWER,
         value_fn=_port_in_use(port),
         port=port,
