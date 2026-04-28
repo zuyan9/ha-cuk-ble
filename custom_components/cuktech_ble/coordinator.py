@@ -92,6 +92,20 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._idle_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------ lifecycle
+    def _on_disconnect(self, client: BleakClient) -> None:
+        """Handle unexpected disconnects."""
+        if self._client is not client:
+            return
+        _LOGGER.debug("AD1204U %s disconnected unexpectedly", self.address)
+        self._session = None
+        self._auth = None
+        self._client = None
+        # Notify the coordinator immediately so entities go unavailable
+        # instead of waiting for the next 30-second poll interval.
+        self.hass.loop.call_soon_threadsafe(
+            self.async_set_update_error, BleakError("Device disconnected unexpectedly")
+        )
+
     async def async_shutdown(self) -> None:
         if self._idle_task is not None:
             self._idle_task.cancel()
@@ -116,6 +130,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             self.device_name or self.address,
             max_attempts=3,
             timeout=self._connection_timeout,
+            disconnected_callback=self._on_disconnect,
         )
         try:
             backend = getattr(client, "_backend", None)
