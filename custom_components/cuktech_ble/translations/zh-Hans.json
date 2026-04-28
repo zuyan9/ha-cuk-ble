@@ -132,34 +132,34 @@
                 "name": "USB-A电源"
             },
             "c1_pd_protocol": {
-                "name": "C1 PD协议"
+                "name": "PD协议"
             },
             "c1_pps_protocol": {
-                "name": "C1 PPS协议"
+                "name": "PPS协议"
             },
             "c1_ufcs_protocol": {
-                "name": "C1 UFCS协议"
+                "name": "UFCS协议"
             },
             "c2_pd_protocol": {
-                "name": "C2 PD协议"
+                "name": "PD协议"
             },
             "c2_pps_protocol": {
-                "name": "C2 PPS协议"
+                "name": "PPS协议"
             },
             "c2_ufcs_protocol": {
-                "name": "C2 UFCS协议"
+                "name": "UFCS协议"
             },
             "c3_ufcs_protocol": {
-                "name": "C3 UFCS协议"
+                "name": "UFCS协议"
             },
             "c3_scp_protocol": {
-                "name": "C3 SCP协议"
+                "name": "SCP协议"
             },
             "a_ufcs_protocol": {
-                "name": "USB-A UFCS协议"
+                "name": "UFCS协议"
             },
             "a_scp_protocol": {
-                "name": "USB-A SCP协议"
+                "name": "SCP协议"
             }
         },
         "select": {

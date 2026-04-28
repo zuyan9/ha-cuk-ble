@@ -20,5 +20,5 @@
     "bleak-retry-connector>=3.5",
     "cryptography>=42"
   ],
-  "version": "0.3.0"
+  "version": "0.3.1"
 }
