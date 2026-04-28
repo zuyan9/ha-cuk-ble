@@ -96,6 +96,8 @@ def _ensure_device_hierarchy(
         manufacturer=MANUFACTURER,
         model=MODEL,
     )
+    if parent.sw_version is not None:
+        registry.async_update_device(parent.id, sw_version=None)
     for port in PORTS:
         child = registry.async_get_device(
             identifiers={(DOMAIN, f"{address}_{port}")}
@@ -107,6 +109,8 @@ def _ensure_device_hierarchy(
             updates["via_device_id"] = parent.id
         if child.area_id is None and parent.area_id is not None:
             updates["area_id"] = parent.area_id
+        if child.sw_version is not None:
+            updates["sw_version"] = None
         if updates:
             registry.async_update_device(child.id, **updates)
 
