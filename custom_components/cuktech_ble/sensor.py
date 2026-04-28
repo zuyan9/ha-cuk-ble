@@ -80,8 +80,6 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
             [
                 AD1204USensorDescription(
                     key=f"{port}_power",
-                    translation_key=f"{port}_power",
-                    name="Power",
                     native_unit_of_measurement=UnitOfPower.WATT,
                     device_class=SensorDeviceClass.POWER,
                     state_class=SensorStateClass.MEASUREMENT,
@@ -91,8 +89,6 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
                 ),
                 AD1204USensorDescription(
                     key=f"{port}_voltage",
-                    translation_key=f"{port}_voltage",
-                    name="Voltage",
                     native_unit_of_measurement=UnitOfElectricPotential.VOLT,
                     device_class=SensorDeviceClass.VOLTAGE,
                     state_class=SensorStateClass.MEASUREMENT,
@@ -102,8 +98,6 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
                 ),
                 AD1204USensorDescription(
                     key=f"{port}_current",
-                    translation_key=f"{port}_current",
-                    name="Current",
                     native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
                     device_class=SensorDeviceClass.CURRENT,
                     state_class=SensorStateClass.MEASUREMENT,
@@ -114,7 +108,6 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
                 AD1204USensorDescription(
                     key=f"{port}_protocol",
                     translation_key="port_protocol",
-                    name="Protocol",
                     device_class=SensorDeviceClass.ENUM,
                     options=list(PROTOCOL_OPTIONS),
                     entity_category=EntityCategory.DIAGNOSTIC,
@@ -123,8 +116,7 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
                 ),
                 AD1204USensorDescription(
                     key=f"{port}_pdo_cap",
-                    translation_key=f"{port}_pdo_cap",
-                    name="PDO cap",
+                    translation_key="pdo_cap",
                     native_unit_of_measurement=UnitOfPower.WATT,
                     device_class=SensorDeviceClass.POWER,
                     entity_category=EntityCategory.DIAGNOSTIC,
@@ -138,7 +130,6 @@ def _build_descriptions() -> tuple[AD1204USensorDescription, ...]:
         AD1204USensorDescription(
             key="total_power",
             translation_key="total_power",
-            name="Total power",
             native_unit_of_measurement=UnitOfPower.WATT,
             device_class=SensorDeviceClass.POWER,
             state_class=SensorStateClass.MEASUREMENT,
