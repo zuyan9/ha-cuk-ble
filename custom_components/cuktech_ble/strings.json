@@ -132,34 +132,34 @@
                 "name": "Port USB-A power"
             },
             "c1_pd_protocol": {
-                "name": "Port C1 PD Protocol"
+                "name": "PD Protocol"
             },
             "c1_pps_protocol": {
-                "name": "Port C1 PPS Protocol"
+                "name": "PPS Protocol"
             },
             "c1_ufcs_protocol": {
-                "name": "Port C1 UFCS Protocol"
+                "name": "UFCS Protocol"
             },
             "c2_pd_protocol": {
-                "name": "Port C2 PD Protocol"
+                "name": "PD Protocol"
             },
             "c2_pps_protocol": {
-                "name": "Port C2 PPS Protocol"
+                "name": "PPS Protocol"
             },
             "c2_ufcs_protocol": {
-                "name": "Port C2 UFCS Protocol"
+                "name": "UFCS Protocol"
             },
             "c3_ufcs_protocol": {
-                "name": "Port C3 UFCS Protocol"
+                "name": "UFCS Protocol"
             },
             "c3_scp_protocol": {
-                "name": "Port C3 SCP Protocol"
+                "name": "SCP Protocol"
             },
             "a_ufcs_protocol": {
-                "name": "Port A UFCS Protocol"
+                "name": "UFCS Protocol"
             },
             "a_scp_protocol": {
-                "name": "Port A SCP Protocol"
+                "name": "SCP Protocol"
             }
         },
         "select": {
