@@ -75,7 +75,21 @@
         }
     },
     "entity": {
+        "binary_sensor": {
+            "port_in_use": {
+                "name": "使用状态"
+            }
+        },
         "sensor": {
+            "cuktech_power": {
+                "name": "功率"
+            },
+            "cuktech_voltage": {
+                "name": "电压"
+            },
+            "cuktech_current": {
+                "name": "电流"
+            },
             "port_protocol": {
                 "name": "协议",
                 "state": {
