@@ -30,29 +30,40 @@ If a script hangs or fails to connect, another client is likely holding the conn
 ```bash
 .venv/bin/python tools/disable_ha_proper.py
 adb -s HA1R80YR shell 'su -c "am force-stop com.xiaomi.smarthome"'
-bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 && bluetoothctl -- remove 3C:CD:73:2B:1B:88
+pkill -f python || true
+bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 || true
+bluetoothctl -- remove 3C:CD:73:2B:1B:88 || true
+sudo rfkill block bluetooth && sleep 1 && sudo rfkill unblock bluetooth
+sleep 1 && bluetoothctl -- power on && sleep 2
 ```
 
 **To free the charger for Tablet capture (Mi Home):**
 ```bash
 .venv/bin/python tools/disable_ha_proper.py
-bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 && bluetoothctl -- remove 3C:CD:73:2B:1B:88
+pkill -f python || true
+bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 || true
+bluetoothctl -- remove 3C:CD:73:2B:1B:88 || true
+sudo rfkill block bluetooth && sleep 1 && sudo rfkill unblock bluetooth
+sleep 1 && bluetoothctl -- power on && sleep 2
 ```
 
 **To return control to Home Assistant:**
 ```bash
 adb -s HA1R80YR shell 'su -c "am force-stop com.xiaomi.smarthome"'
-bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 && bluetoothctl -- remove 3C:CD:73:2B:1B:88
+pkill -f python || true
+bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 || true
+bluetoothctl -- remove 3C:CD:73:2B:1B:88 || true
 .venv/bin/python tools/enable_ha_proper.py
 ```
 
 ## Troubleshooting BLE
 
-- **"not advertising" / "Device not found" on Pi:** BlueZ is holding a phantom session. Flush it:
+- **"not advertising" / "Device not found" on Pi:** BlueZ is holding a phantom session or is stuck in a passive scanning loop. Flush it:
   ```bash
   bluetoothctl -- disconnect 3C:CD:73:2B:1B:88 && bluetoothctl -- remove 3C:CD:73:2B:1B:88
   ```
-- **"org.bluez.Error.Busy" / Adapter off:** The Bluetooth adapter may crash or get soft-blocked during aggressive testing. Restart it:
+- **"org.bluez.Error.Busy" / "org.bluez.Error.InProgress":** The Bluetooth adapter is crashed or multiple scripts are trying to scan/connect simultaneously. Perform a hard reset of the adapter:
   ```bash
-  sleep 2 && bluetoothctl -- power on && sleep 2
+  pkill -f python
+  sudo rfkill block bluetooth && sleep 1 && sudo rfkill unblock bluetooth && sleep 1 && bluetoothctl -- power on
   ```
