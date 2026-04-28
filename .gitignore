@@ -58,6 +58,14 @@ update_hacs*.py
 /tools/enable_ha*.py
 /tools/reload_ha*.py
 /tools/get_ha_logs.py
+/tools/get_logs.py
+/tools/get_states.py
+/tools/get_translations*.py
+/tools/purge_entities.py
+/tools/recreate_entry.py
+/tools/set_debug.py
+/tools/update_polling_rate.py
+/tools/update_translations.py
 /tools/query_hacs.py
 
 # Other agent metadata kept out of the repo
