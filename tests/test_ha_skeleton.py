@@ -34,3 +34,10 @@ def test_home_assistant_skeleton_registers_expected_platforms() -> None:
     # Number and button writes still not exercised.
     assert "Platform.NUMBER" not in init_py
     assert "Platform.BUTTON" not in init_py
+
+
+def test_sensor_builder_has_one_voltage_and_current_entity_per_port() -> None:
+    sensor_py = Path("custom_components/cuktech_ble/sensor.py").read_text()
+
+    assert sensor_py.count('key=f"{port}_voltage"') == 1
+    assert sensor_py.count('key=f"{port}_current"') == 1
