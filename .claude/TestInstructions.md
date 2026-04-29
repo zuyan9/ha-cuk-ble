@@ -134,6 +134,16 @@ adb -s HA1R80YR shell 'su -c "cat /data/misc/bluetooth/logs/btsnoop_hci.log"' \
 .venv/bin/python tools/btsnoop_att.py /tmp/btsnoop.log --mac 3C:CD:73:2B:1B:88
 ```
 
+On Android 14, `btsnoop_hci.log` may be all zeroes after manual truncation. If
+that happens, pull the latest `BT_HCI_*.cfa.curf` file instead; it can still be
+plain btsnoop format despite the `.cfa.curf` suffix:
+
+```bash
+adb -s HA1R80YR shell 'su -c "ls -lt /data/misc/bluetooth/logs/BT_HCI_*"'
+adb -s HA1R80YR shell 'su -c "cat /data/misc/bluetooth/logs/BT_HCI_YYYY_MMDD_HHMMSS.cfa.curf"' \
+    > /tmp/btsnoop.log
+```
+
 Related udev rule: `/etc/udev/rules.d/53-km003c.rules` for the KM003C
 (VID/PID `5fc9:0063`).
 
@@ -213,6 +223,28 @@ Port-submenu taps on the rooted tablet didn't produce observable writes
 with fixed tap coordinates, or actually using the Xiaomi app manually,
 would close this out.
 
+### 4. Temperature exposure check (closed 2026-04-29)
+
+The charger hardware has NTC temperature monitoring, but no readable BLE
+temperature value has been found.
+
+Evidence:
+- Public MIOT spec for `njcuk.fitting.ad1204` exposes charger properties only
+  through `2.21`; no temp property.
+- Mi Home RN plugin `1028581` / `1896060` subscribes to the same
+  `prop.2.1`..`prop.2.21` list and has no temperature string/property map.
+- Existing decrypted captures show only port-info/protocol/settings updates.
+- Fresh rooted-tablet capture with HA disabled and Mi Home on the connected
+  charger page decoded to 191 MIOT rows. Mi Home queried only
+  `2.1`, `2.2`, `2.3`, `2.4`, `2.5`, `2.6`, `2.7`, `2.13`, `2.15`, `2.16`,
+  `2.17`, `2.18`, `2.19`, `2.20`, and `2.21`, then received `2.1`/`2.2`
+  port-info notifications; no temp path appeared.
+- Direct authenticated Pi-side sweep of `siid=2` `piid=0x16..0x40` returned
+  not-found status `0xf05f` for unknown properties.
+
+Conclusion: don't add a HA temperature entity until a new firmware/plugin
+exposes a real value or we reverse a private/non-MIOT command path.
+
 ## Next steps
 
 Ordered by "finishable as a single unit" and by what each one unlocks.
@@ -252,18 +284,21 @@ Ordered by "finishable as a single unit" and by what each one unlocks.
 8. **piid `0x0e`** — Mi Home writes `val=2` on every reconnect. Read
    its current value, try writing different values, see what moves in
    the device state.
+9. **Temperature private path** — only if new evidence appears. Current
+   MIOT/property/plugin paths do not expose temperature despite the hardware
+   sensor.
 
 ### Integration polish (after 6/7 land)
 
-9. Switches for per-port UFCS/PD/PPS enable.
-10. Switches (or a combined number) for `port_ctl` port-enable bitmap.
-11. Number entity for `screen_save_time` if it's a minutes value.
+10. Switches for per-port UFCS/PD/PPS enable.
+11. Switches (or a combined number) for `port_ctl` port-enable bitmap.
+12. Number entity for `screen_save_time` if it's a minutes value.
 
 ### Housekeeping
 
-12. Screenshots for the root README (still a TODO in the HACS landing
+13. Screenshots for the root README (still a TODO in the HACS landing
     flow).
-13. `.mailmap` if GitHub's Contributors list still shows `@claude` past
+14. `.mailmap` if GitHub's Contributors list still shows `@claude` past
     ~2026-04-25.
 
 ## Tools that exist

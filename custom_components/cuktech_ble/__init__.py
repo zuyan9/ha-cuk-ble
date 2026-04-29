@@ -72,14 +72,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: AD1204UConfigEntry) -> b
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = AD1204URuntimeData(coordinator=coordinator)
-    _ensure_device_hierarchy(hass, entry, address)
+    _ensure_device_hierarchy(
+        hass, entry, address, firmware_version=coordinator.firmware_version
+    )
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 def _ensure_device_hierarchy(
-    hass: HomeAssistant, entry: AD1204UConfigEntry, address: str
+    hass: HomeAssistant,
+    entry: AD1204UConfigEntry,
+    address: str,
+    *,
+    firmware_version: str | None,
 ) -> None:
     """Register the parent device up-front and relink orphaned sub-devices.
 
@@ -88,16 +94,21 @@ def _ensure_device_hierarchy(
     also propagate the parent's area to any sub-devices that don't have one.
     """
     registry = dr.async_get(hass)
-    parent = registry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, address)},
-        connections={(dr.CONNECTION_BLUETOOTH, address)},
-        name=DEFAULT_DEVICE_NAME,
-        manufacturer=MANUFACTURER,
-        model=MODEL,
-    )
-    if parent.sw_version is not None:
-        registry.async_update_device(parent.id, sw_version=None)
+    parent_info = {
+        "config_entry_id": entry.entry_id,
+        "identifiers": {(DOMAIN, address)},
+        "connections": {(dr.CONNECTION_BLUETOOTH, address)},
+        "name": DEFAULT_DEVICE_NAME,
+        "manufacturer": MANUFACTURER,
+        "model": MODEL,
+    }
+    # Home Assistant's device registry stores firmware/software version here.
+    if firmware_version is not None:
+        parent_info["sw_version"] = firmware_version
+
+    parent = registry.async_get_or_create(**parent_info)
+    if firmware_version is not None and parent.sw_version != firmware_version:
+        registry.async_update_device(parent.id, sw_version=firmware_version)
     for port in PORTS:
         child = registry.async_get_device(
             identifiers={(DOMAIN, f"{address}_{port}")}

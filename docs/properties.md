@@ -42,6 +42,34 @@ Response:
 | 0x14 | screen_dir_lock | bool | |
 | 0x15 | protocol_ctl_extend | u32 | |
 
+## Temperature
+
+The AD1204U hardware has internal NTC temperature monitoring and the charger
+screen can show temperature, but no BLE-readable temperature property has been
+found yet.
+
+Checks done on 2026-04-29:
+
+- The public MIOT spec for `njcuk.fitting.ad1204` defines only charger
+  properties `2.1` through `2.21`; none are temperature-related.
+- The Mi Home RN plugin bundle for plugin `1028581` / version `1896060`
+  subscribes to the same `prop.2.1` through `prop.2.21` list and contains no
+  temperature UI/string/property mapping.
+- Existing decrypted Mi Home captures only show port-info/protocol/settings
+  notifications.
+- A fresh rooted-tablet Mi Home capture with HA disabled and the charger device
+  page connected produced 191 decrypted MIOT rows. Mi Home requested only
+  `2.1`, `2.2`, `2.3`, `2.4`, `2.5`, `2.6`, `2.7`, `2.13`, `2.15`, `2.16`,
+  `2.17`, `2.18`, `2.19`, `2.20`, and `2.21`; no extra temperature property
+  or non-MIOT temperature read appeared.
+- A live authenticated read sweep of `siid=2` `piid=0x16..0x40` returned the
+  firmware not-found status `0xf05f` for unknown properties.
+
+Conclusion: temperature is not exposed over the currently reversed BLE MIOT
+path. Adding a Home Assistant temperature sensor needs a new reverse-engineering
+lead, such as a future plugin/firmware property, a private action, or a
+non-MIOT GATT characteristic.
+
 ## Per-port power word decode
 
 The u32 port-info value, taken little-endian as bytes `b0 b1 b2 b3`:
@@ -138,3 +166,5 @@ Observed on the C3/A shared rail (voltage-band driven, see earlier notes):
   our captures. Their writable semantics are still unknown.
 - **piid `0x0e`** — Mi Home writes val=2 on every reconnect. Purpose
   unknown; the integration doesn't touch it.
+- **Temperature telemetry** — the charger has internal NTC monitoring, but no
+  BLE MIOT property or Mi Home plugin field currently exposes it.

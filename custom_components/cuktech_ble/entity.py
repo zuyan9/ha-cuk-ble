@@ -25,13 +25,16 @@ class AD1204UEntity(CoordinatorEntity[AD1204UCoordinator]):
         parent_name = DEFAULT_DEVICE_NAME
         
         if port is None:
-            self._attr_device_info = DeviceInfo(
+            device_info = DeviceInfo(
                 identifiers={parent_id},
                 connections={(CONNECTION_BLUETOOTH, coordinator.address)},
                 name=parent_name,
                 manufacturer=MANUFACTURER,
                 model=MODEL,
             )
+            if coordinator.firmware_version is not None:
+                device_info["sw_version"] = coordinator.firmware_version
+            self._attr_device_info = device_info
         else:
             label = PORT_LABELS.get(port, port.upper())
             self._attr_device_info = DeviceInfo(
