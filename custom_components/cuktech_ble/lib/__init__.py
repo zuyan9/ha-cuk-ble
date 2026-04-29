@@ -6,6 +6,7 @@ from .constants import (
     FE95_UUID,
 )
 from .fe95 import FE95Frame, parse_fe95
+from .firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
 from .models import ChargerSnapshot, DiscoveredCharger
 from .ports import PortInfo, decode_pdo_caps, decode_port_info
 
@@ -16,7 +17,9 @@ __all__ = [
     "DiscoveredCharger",
     "FE95Frame",
     "FE95_UUID",
+    "FIRMWARE_VERSION_UUID",
     "PortInfo",
+    "decode_firmware_version",
     "decode_pdo_caps",
     "decode_port_info",
     "parse_fe95",

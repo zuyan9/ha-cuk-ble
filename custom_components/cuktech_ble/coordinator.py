@@ -31,6 +31,7 @@ from .lib.ports import (
     decode_pdo_caps,
     decode_port_info,
 )
+from .lib.firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
 from .lib.xiaomi import MiAuthClient
 from .lib.xiaomi.properties import get_properties, set_property
 from .lib.xiaomi.session import MiSession
@@ -87,6 +88,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._client: BleakClient | None = None
         self._auth: MiAuthClient | None = None
         self._session: MiSession | None = None
+        self.firmware_version: str | None = None
         self._lock = asyncio.Lock()
         self._last_success_ts: float = 0.0
         self._idle_task: asyncio.Task | None = None
@@ -133,6 +135,9 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             disconnected_callback=self._on_disconnect,
         )
         try:
+            if self.firmware_version is None:
+                self.firmware_version = await self._read_firmware_version(client)
+
             backend = getattr(client, "_backend", None)
             if backend is not None and hasattr(backend, "_acquire_mtu"):
                 try:
@@ -170,6 +175,15 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._session = session
         _LOGGER.info("AD1204U %s connected + logged in", self.address)
         return session
+
+    async def _read_firmware_version(self, client: BleakClient) -> str | None:
+        """Read the plain GATT firmware-version characteristic, if present."""
+        try:
+            raw = await client.read_gatt_char(FIRMWARE_VERSION_UUID)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("firmware version read failed", exc_info=True)
+            return None
+        return decode_firmware_version(raw)
 
     async def _disconnect(self) -> None:
         session, auth, client = self._session, self._auth, self._client
@@ -309,5 +323,4 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         screenoff_while_idle=_bool(0x13),
         screen_dir_lock=_bool(0x14),
     )
-
 

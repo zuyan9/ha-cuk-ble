@@ -20,6 +20,7 @@ async def async_get_config_entry_diagnostics(
     if data is not None:
         snapshot = {
             "ports": {p: info.to_dict() for p, info in data.ports.items()},
+            "firmware_version": coordinator.firmware_version,
             "total_power_w": data.total_power_w,
             "pdo_caps_w": data.pdo_caps_w,
             "scene_mode": data.scene_mode,

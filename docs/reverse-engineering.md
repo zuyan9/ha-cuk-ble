@@ -100,3 +100,26 @@ These contradict the earlier assumption that `0x01`/`0x03` meant "idle" — they
 are PD codes that happen to appear at rest (because the port is on a PD
 handshake idle/advertising frame) and under load (because the PD contract
 stayed at the same subtype). The authoritative idle signal is always `b0`.
+
+## Temperature exposure check
+
+The AD1204U has internal NTC temperature monitoring, but temperature is not
+exposed by the BLE MIOT surface currently used by Mi Home.
+
+On 2026-04-29, the public MIOT spec and the installed Mi Home RN plugin
+(`1028581` / `1896060`) both stopped at charger property `2.21` and contained
+no temperature field. Existing decrypted captures only carried port-info,
+protocol, and settings notifications. A direct authenticated sweep of hidden
+`siid=2` properties from `0x16` through `0x40` returned not-found status
+`0xf05f`.
+
+A fresh rooted-tablet capture was also taken with HA disabled and Mi Home opened
+to the connected charger page. It decrypted to 191 MIOT rows: Mi Home queried
+only the known property set (`2.1`, `2.2`, `2.3`, `2.4`, `2.5`, `2.6`, `2.7`,
+`2.13`, `2.15`, `2.16`, `2.17`, `2.18`, `2.19`, `2.20`, `2.21`) and then
+received spontaneous port-info notifications on `2.1`/`2.2`. No temperature
+property, private temperature read, or temperature-like non-MIOT GATT exchange
+appeared in that app session.
+
+Conclusion: temperature needs a different reverse-engineering lead before the
+integration can expose a real HA temperature sensor.

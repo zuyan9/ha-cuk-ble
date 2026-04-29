@@ -18,6 +18,7 @@ Resolve by UUID — ATT handles change across firmware.
 | UUID (short) | Role | ATT handle (this device) |
 |---|---|---|
 | `0x0010` UPNP  | Auth command channel | 0x000d |
+| `0x0004`       | Plain ASCII firmware version | 0x0008 |
 | `0x0019` AVDTP | Auth parcel channel (RCV_RDY/OK, handshake frames) | 0x0010 |
 | `0x001a` MIOT write | Encrypted MIOT requests + flow-control | 0x0019 |
 | `0x001b` MIOT notify | Encrypted MIOT responses + spontaneous telemetry pushes | 0x001c |
