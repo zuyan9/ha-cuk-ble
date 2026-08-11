@@ -23,7 +23,6 @@ import argparse
 import base64
 import getpass
 import hashlib
-import hmac
 import json
 import os
 import random
@@ -387,14 +386,14 @@ def main() -> int:
             continue
         token = str(dev.get("token", "")).strip().lower()
         if len(token) not in (24, 32):
-            print(f"unexpected token length {len(token)}: {token}", file=sys.stderr)
+            print(f"unexpected token length {len(token)}", file=sys.stderr)
             return 1
         token_hex = token[:24]
         args.output.write_text(
             json.dumps({"address": args.address, "token_hex": token_hex}) + "\n"
         )
         args.output.chmod(0o600)
-        print(f"wrote {args.output} (token: {token_hex})")
+        print(f"wrote token to {args.output}")
         return 0
 
     print(

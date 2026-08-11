@@ -273,7 +273,7 @@ def run(path: Path, mac: str, bindkey: bytes) -> None:
     if tx_rand and rx_rand:
         randA = tx_rand[0][1]
         randB = rx_rand[0][1]
-        print(f"\n# Assuming RandA = first TX ECB result, RandB = first RX ECB result")
+        print("\n# Assuming RandA = first TX ECB result, RandB = first RX ECB result")
         print(f"#   RandA = {randA.hex()}  (entropy {entropy(randA):.2f})")
         print(f"#   RandB = {randB.hex()}  (entropy {entropy(randB):.2f})")
 

@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (Python 3.11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Install test dependencies
+        run: uv pip install --system -e ".[test]"
+      - name: Lint
+        run: ruff check custom_components tests tests_ha
+      - name: Test
+        run: python -m pytest -q
+      - name: Compile Python sources
+        run: python -m compileall -q custom_components tools
+
+  minimum-home-assistant:
+    name: Home Assistant 2025.3 imports
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Install minimum supported Home Assistant
+        run: |
+          uv pip install --system -e . pytest \
+            "aiohttp==3.11.13" \
+            "homeassistant==2025.3.0" \
+            "aiousbwatcher==1.1.1" \
+            "pyserial==3.5" \
+            "bleak==0.22.3" \
+            "bleak-retry-connector==3.9.0" \
+            "bluetooth-adapters==0.21.4" \
+            "bluetooth-auto-recovery==1.4.4" \
+            "bluetooth-data-tools==1.23.4" \
+            "dbus-fast==2.33.0" \
+            "habluetooth==3.24.1"
+      - name: Import every integration module
+        run: python -m pytest -q tests/test_ha_imports.py
+
+  current-home-assistant:
+    name: Current Home Assistant lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Install current Home Assistant harness
+        run: |
+          uv pip install --system -e . \
+            "pytest-homeassistant-custom-component==0.13.355" \
+            "aiousbwatcher==1.1.2" \
+            "serialx==1.8.2" \
+            "bleak==3.0.2" \
+            "bleak-retry-connector==4.6.3" \
+            "bluetooth-adapters==2.4.0" \
+            "bluetooth-auto-recovery==1.6.4" \
+            "bluetooth-data-tools==1.29.18" \
+            "dbus-fast==5.0.22" \
+            "habluetooth==6.26.5"
+      - name: Run lifecycle test
+        run: python -m pytest -q tests_ha --asyncio-mode=auto

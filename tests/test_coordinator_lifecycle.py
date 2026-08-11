@@ -1,8 +1,8 @@
 import asyncio
-from contextlib import suppress
 import importlib.util
 import sys
 import types
+from contextlib import suppress
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -21,6 +21,9 @@ def _load_coordinator_module():
     class StubUpdateFailed(Exception):
         pass
 
+    class StubConfigEntryAuthFailed(Exception):
+        pass
+
     homeassistant = types.ModuleType("homeassistant")
     homeassistant.__path__ = []
     components = types.ModuleType("homeassistant.components")
@@ -31,6 +34,10 @@ def _load_coordinator_module():
     )
     core = types.ModuleType("homeassistant.core")
     core.HomeAssistant = type("HomeAssistant", (), {})
+    config_entries = types.ModuleType("homeassistant.config_entries")
+    config_entries.ConfigEntry = type("ConfigEntry", (), {})
+    exceptions = types.ModuleType("homeassistant.exceptions")
+    exceptions.ConfigEntryAuthFailed = StubConfigEntryAuthFailed
     helpers = types.ModuleType("homeassistant.helpers")
     helpers.__path__ = []
     update_coordinator = types.ModuleType(
@@ -44,7 +51,9 @@ def _load_coordinator_module():
         "homeassistant": homeassistant,
         "homeassistant.components": components,
         "homeassistant.components.bluetooth": bluetooth,
+        "homeassistant.config_entries": config_entries,
         "homeassistant.core": core,
+        "homeassistant.exceptions": exceptions,
         "homeassistant.helpers": helpers,
         "homeassistant.helpers.update_coordinator": update_coordinator,
     }
@@ -106,6 +115,7 @@ class FakeClient:
 class FakeSubscription:
     def __init__(self) -> None:
         self.unsubscribe_calls = 0
+        self.requires_reauthentication = False
 
     async def unsubscribe(self) -> None:
         self.unsubscribe_calls += 1
@@ -116,12 +126,15 @@ def _make_coordinator(*, idle_release: float) -> AD1204UCoordinator:
     coordinator.hass = FakeHass()
     coordinator.address = "AA:BB:CC:DD:EE:FF"
     coordinator._idle_release = idle_release
+    coordinator._connection_timeout = 0.01
     coordinator._idle_task = None
     coordinator._disconnect_task = None
     coordinator._lock = asyncio.Lock()
     coordinator._client = None
+    coordinator._connecting_client = None
     coordinator._auth = None
     coordinator._session = None
+    coordinator._connection_generation = 0
     coordinator._property_values = {}
     coordinator._pending_notification_values = {}
     coordinator._baseline_session = None
@@ -311,10 +324,13 @@ def test_new_connection_arms_idle_release(monkeypatch) -> None:
                 *,
                 timeout: float,
                 notification_callback,
+                fatal_error_callback,
             ) -> None:
                 assert isinstance(auth, FakeAuth)
                 assert timeout == 15
                 self.notification_callback = notification_callback
+                self.fatal_error_callback = fatal_error_callback
+                self.requires_reauthentication = False
 
             async def subscribe(self) -> None:
                 pass
@@ -355,10 +371,160 @@ def test_new_connection_arms_idle_release(monkeypatch) -> None:
     asyncio.run(run())
 
 
+def test_cancelled_setup_disconnects_established_client(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        coordinator._token = b"token"
+        coordinator.device_name = "charger"
+        coordinator._connection_timeout = 15
+        coordinator._bluez_start_notify = False
+        coordinator.firmware_version = "known"
+        client = FakeClient()
+        subscribe_started = asyncio.Event()
+        auth_instances = []
+
+        class BlockingAuth(FakeSubscription):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__()
+                auth_instances.append(self)
+
+            async def subscribe(self, *, upnp: bool) -> None:
+                assert upnp is False
+                subscribe_started.set()
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_ble_device_from_address",
+            Mock(return_value=object()),
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "establish_connection",
+            AsyncMock(return_value=client),
+        )
+        monkeypatch.setattr(coordinator_module, "MiAuthClient", BlockingAuth)
+
+        setup_task = asyncio.create_task(coordinator._ensure_connected())
+        await subscribe_started.wait()
+        setup_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await setup_task
+
+        assert auth_instances[0].unsubscribe_calls == 1
+        assert client.disconnect_calls == 1
+        assert coordinator._connecting_client is None
+        assert coordinator._client is None
+        assert coordinator._session is None
+
+    asyncio.run(run())
+
+
+def test_disconnect_during_setup_cannot_install_client(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        coordinator._token = b"token"
+        coordinator.device_name = "charger"
+        coordinator._connection_timeout = 15
+        coordinator._bluez_start_notify = False
+        coordinator.firmware_version = "known"
+        client = FakeClient()
+        auth_instances = []
+
+        class DisconnectingAuth(FakeSubscription):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__()
+                auth_instances.append(self)
+
+            async def subscribe(self, *, upnp: bool) -> None:
+                coordinator._handle_disconnect(client)
+
+            async def greet(self) -> None:
+                pass
+
+            async def subscribe_upnp(self) -> None:
+                pass
+
+            async def login(self, token: bytes):
+                return object()
+
+        class FakeSession(FakeSubscription):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__()
+
+            async def subscribe(self) -> None:
+                pass
+
+            async def initialize(self) -> None:
+                pass
+
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_ble_device_from_address",
+            Mock(return_value=object()),
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "establish_connection",
+            AsyncMock(return_value=client),
+        )
+        monkeypatch.setattr(coordinator_module, "MiAuthClient", DisconnectingAuth)
+        monkeypatch.setattr(coordinator_module, "MiSession", FakeSession)
+        monkeypatch.setattr(coordinator_module.asyncio, "sleep", AsyncMock())
+
+        with pytest.raises(
+            coordinator_module.UpdateFailed,
+            match="connection changed during setup",
+        ):
+            await coordinator._ensure_connected()
+
+        assert auth_instances[0].unsubscribe_calls == 1
+        assert client.disconnect_calls == 1
+        assert coordinator._client is None
+        assert coordinator._session is None
+
+    asyncio.run(run())
+
+
+def test_expired_counter_session_is_released_before_reconnect(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        session.requires_reauthentication = True
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        lookup = Mock(return_value=None)
+        monkeypatch.setattr(
+            coordinator_module.bluetooth,
+            "async_ble_device_from_address",
+            lookup,
+        )
+
+        with pytest.raises(
+            coordinator_module.UpdateFailed,
+            match="not currently visible",
+        ):
+            await coordinator._ensure_connected()
+
+        assert session.unsubscribe_calls == 1
+        assert auth.unsubscribe_calls == 1
+        assert client.disconnect_calls == 1
+        lookup.assert_called_once()
+
+    asyncio.run(run())
+
+
 def test_scheduled_poll_does_not_rearm_idle_release(monkeypatch) -> None:
     async def run() -> None:
         coordinator = _make_coordinator(idle_release=300)
-        coordinator._ensure_connected = AsyncMock(return_value=object())
+        client = FakeClient()
+        session = object()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
         coordinator._arm_idle_release = Mock()
         get_properties = AsyncMock(return_value={})
         monkeypatch.setattr(coordinator_module, "get_properties", get_properties)
@@ -368,6 +534,129 @@ def test_scheduled_poll_does_not_rearm_idle_release(monkeypatch) -> None:
         coordinator._arm_idle_release.assert_not_called()
         get_properties.assert_awaited_once()
         assert coordinator._property_values == {}
+
+    asyncio.run(run())
+
+
+def test_invalid_token_during_refresh_requests_reauthentication() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        invalid_token_error = coordinator_module.MiAuthInvalidTokenError(
+            "confirmed token rejection"
+        )
+        coordinator._ensure_connected = AsyncMock(side_effect=invalid_token_error)
+
+        with pytest.raises(
+            coordinator_module.ConfigEntryAuthFailed,
+            match="rejected the configured BLE token",
+        ):
+            await coordinator._async_update_data()
+
+        assert coordinator._client is None
+        assert coordinator._session is None
+
+    asyncio.run(run())
+
+
+def test_disconnect_generation_rejects_inflight_poll(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator.async_set_update_error = Mock()
+
+        async def disconnect_then_return(_session):
+            coordinator._handle_disconnect(client)
+            return {
+                (2, 5): coordinator_module.PropertyValue(
+                    2, 5, 0, 0x01, 0x10, 3
+                )
+            }
+
+        monkeypatch.setattr(
+            coordinator_module, "get_properties", disconnect_then_return
+        )
+
+        with pytest.raises(
+            coordinator_module.UpdateFailed,
+            match="connection changed during refresh",
+        ):
+            await coordinator._async_update_data()
+
+        cleanup_task = coordinator._disconnect_task
+        if cleanup_task is not None:
+            await cleanup_task
+        assert coordinator._baseline_session is None
+        assert coordinator._property_values == {}
+        coordinator.async_set_update_error.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_disconnect_generation_rejects_inflight_set(monkeypatch) -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        coordinator._ensure_connected = AsyncMock(return_value=session)
+        coordinator.async_set_update_error = Mock()
+        coordinator.async_refresh = AsyncMock()
+
+        async def disconnect_during_set(*_args, **_kwargs) -> None:
+            coordinator._handle_disconnect(client)
+
+        monkeypatch.setattr(
+            coordinator_module, "set_property", disconnect_during_set
+        )
+
+        with pytest.raises(
+            coordinator_module.UpdateFailed,
+            match="connection changed during set",
+        ):
+            await coordinator.async_set_property(2, 5, 1)
+
+        cleanup_task = coordinator._disconnect_task
+        if cleanup_task is not None:
+            await cleanup_task
+        coordinator.async_refresh.assert_not_awaited()
+        assert coordinator._client is None
+
+    asyncio.run(run())
+
+
+def test_fatal_reader_error_marks_unavailable_and_cleans_up() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = FakeSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+        coordinator._baseline_session = session
+        coordinator.async_set_update_error = Mock()
+        error = RuntimeError("notification reader stopped")
+
+        coordinator._handle_session_error(session, error)
+
+        coordinator.async_set_update_error.assert_called_once_with(error)
+        assert coordinator._baseline_session is None
+        cleanup_task = coordinator._disconnect_task
+        assert cleanup_task is not None
+        await cleanup_task
+        assert coordinator._client is None
+        assert session.unsubscribe_calls == 1
+        assert auth.unsubscribe_calls == 1
+        assert client.disconnect_calls == 1
 
     asyncio.run(run())
 
@@ -574,6 +863,38 @@ def test_shutdown_waits_for_inflight_work_and_is_idempotent(monkeypatch) -> None
         await coordinator.async_shutdown()
         assert coordinator.parent_shutdown_calls == 2
         assert client.disconnect_calls == 1
+
+    asyncio.run(run())
+
+
+def test_disconnect_times_out_wedged_cleanup_and_continues() -> None:
+    class HangingSubscription:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        async def unsubscribe(self) -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=0)
+        client = FakeClient()
+        auth = FakeSubscription()
+        session = HangingSubscription()
+        coordinator._client = client
+        coordinator._auth = auth
+        coordinator._session = session
+
+        await asyncio.wait_for(coordinator._disconnect(), timeout=0.2)
+
+        assert session.cancelled is True
+        assert auth.unsubscribe_calls == 1
+        assert client.disconnect_calls == 1
+        assert coordinator._client is None
+        assert coordinator._auth is None
+        assert coordinator._session is None
 
     asyncio.run(run())
 

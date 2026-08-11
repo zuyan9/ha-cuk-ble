@@ -1,23 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from typing import Any, Callable
+from unittest.mock import AsyncMock
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
-
-from cuktech_ble.xiaomi.auth import MiSessionKeys, _ChannelQueue
-from cuktech_ble.xiaomi.protocol import OFFICIAL_ACK
+from cuktech_ble.xiaomi import crypto
+from cuktech_ble.xiaomi.auth import (
+    MAX_AUTH_PARCELS,
+    MiAuthClient,
+    MiAuthError,
+    MiAuthInvalidTokenError,
+    MiSessionKeys,
+    _ChannelQueue,
+)
+from cuktech_ble.xiaomi.protocol import CFM_LOGIN_ERR, OFFICIAL_ACK
 from cuktech_ble.xiaomi.session import (
     MAX_CAPTURED_FRAMES,
+    MAX_MIOT_COUNTER,
     MAX_MIOT_PARCELS,
     MIOT_NOTIFY_UUID,
     MIOT_WRITE_UUID,
     MiSession,
     MiSessionError,
+    MiSessionReauthenticationRequired,
     mible_v1_nonce,
 )
-
 
 KEYS = MiSessionKeys(
     dev_key=bytes.fromhex("00112233445566778899aabbccddeeff"),
@@ -31,6 +41,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.handlers: dict[str, Callable[[Any, bytearray], None]] = {}
         self.stopped: list[str] = []
+        self.writes: list[tuple[str, bytes]] = []
 
     async def start_notify(
         self, uuid: str, callback: Callable[[Any, bytearray], None], **_: object
@@ -40,6 +51,12 @@ class FakeClient:
     async def stop_notify(self, uuid: str) -> None:
         self.stopped.append(uuid)
         self.handlers.pop(uuid, None)
+
+    async def write_gatt_char(
+        self, uuid: str, data: bytearray, *, response: bool
+    ) -> None:
+        assert response is False
+        self.writes.append((uuid, bytes(data)))
 
     def emit(self, uuid: str, data: bytes) -> None:
         self.handlers[uuid](uuid, bytearray(data))
@@ -64,10 +81,15 @@ def _inline(plaintext: bytes, counter: int) -> bytes:
 
 async def _session(
     callback: Callable[[bytes], None] | None = None,
+    fatal_callback: Callable[[Exception], None] | None = None,
 ) -> tuple[MiSession, FakeAuth]:
     auth = FakeAuth()
     session = MiSession(
-        auth, KEYS, timeout=0.25, notification_callback=callback  # type: ignore[arg-type]
+        auth,
+        KEYS,
+        timeout=0.25,
+        notification_callback=callback,
+        fatal_error_callback=fatal_callback,
     )
     await session.subscribe()
     return session, auth
@@ -206,6 +228,7 @@ def test_unsubscribe_fails_pending_request_and_stops_reader() -> None:
             session.send_request(bytes.fromhex("33 20 12 00 02 00"))
         )
         await send_entered.wait()
+        assert session._tx_counter == 1
         reader = session._reader_task
         assert reader is not None and not reader.done()
 
@@ -218,6 +241,94 @@ def test_unsubscribe_fails_pending_request_and_stops_reader() -> None:
 
         await session.unsubscribe()
         assert auth._client.stopped == [MIOT_NOTIFY_UUID, MIOT_WRITE_UUID]
+
+    asyncio.run(run())
+
+
+def test_tx_counter_is_spent_before_uncertain_io_and_never_wraps() -> None:
+    async def run() -> None:
+        fatal_errors: list[Exception] = []
+        session, _auth = await _session(fatal_callback=fatal_errors.append)
+        session._tx_counter = MAX_MIOT_COUNTER
+        send_calls: list[int] = []
+
+        async def failed_send(_ciphertext: bytes, counter: int) -> None:
+            send_calls.append(counter)
+            assert session._tx_counter == MAX_MIOT_COUNTER + 1
+            raise OSError("uncertain BLE write")
+
+        session._send_encrypted = failed_send  # type: ignore[method-assign]
+        try:
+            with pytest.raises(OSError, match="uncertain BLE write"):
+                await session.send_request(bytes.fromhex("33 20 34 12 02 00"))
+            assert session.requires_reauthentication is True
+
+            with pytest.raises(
+                MiSessionReauthenticationRequired,
+                match="TX counter exhausted",
+            ):
+                await session.send_request(bytes.fromhex("33 20 35 12 02 00"))
+            assert send_calls == [MAX_MIOT_COUNTER]
+            assert len(fatal_errors) == 1
+        finally:
+            await session.unsubscribe()
+
+    asyncio.run(run())
+
+
+def test_rx_counter_boundary_delivers_last_frame_then_requires_reauth() -> None:
+    async def run() -> None:
+        pushes: list[bytes] = []
+        fatal_errors: list[Exception] = []
+        session, auth = await _session(pushes.append, fatal_errors.append)
+        notification = bytes.fromhex(
+            "0f 20 01 00 04 01 02 02 00 04 50 01 0a 29 c9"
+        )
+        try:
+            auth._client.emit(
+                MIOT_NOTIFY_UUID,
+                _inline(notification, MAX_MIOT_COUNTER),
+            )
+            reader = session._reader_task
+            assert reader is not None
+            await asyncio.wait_for(reader, timeout=1)
+
+            assert pushes == [notification]
+            assert session.requires_reauthentication is True
+            assert len(fatal_errors) == 1
+            assert isinstance(
+                fatal_errors[0], MiSessionReauthenticationRequired
+            )
+            assert auth.writes[-1] == (MIOT_NOTIFY_UUID, OFFICIAL_ACK)
+        finally:
+            await session.unsubscribe()
+
+    asyncio.run(run())
+
+
+def test_repeated_rx_counter_stops_before_second_decrypt() -> None:
+    async def run() -> None:
+        pushes: list[bytes] = []
+        fatal_errors: list[Exception] = []
+        session, auth = await _session(pushes.append, fatal_errors.append)
+        notification = bytes.fromhex(
+            "0f 20 01 00 04 01 02 02 00 04 50 01 0a 29 c9"
+        )
+        try:
+            frame = _inline(notification, 7)
+            auth._client.emit(MIOT_NOTIFY_UUID, frame)
+            auth._client.emit(MIOT_NOTIFY_UUID, frame)
+            reader = session._reader_task
+            assert reader is not None
+            await asyncio.wait_for(reader, timeout=1)
+
+            assert pushes == [notification]
+            assert len(fatal_errors) == 1
+            assert isinstance(
+                fatal_errors[0], MiSessionReauthenticationRequired
+            )
+        finally:
+            await session.unsubscribe()
 
     asyncio.run(run())
 
@@ -244,7 +355,10 @@ def test_inline_notification_interleaved_with_parcels_is_acked_and_deferred() ->
         parcel_frame = await session._recv_encrypted()
         deferred_frame = await session._recv_encrypted()
 
-        assert session.decrypt(parcel_frame.ciphertext, parcel_frame.counter) == response
+        assert (
+            session.decrypt(parcel_frame.ciphertext, parcel_frame.counter)
+            == response
+        )
         assert session.decrypt(
             deferred_frame.ciphertext, deferred_frame.counter
         ) == notification
@@ -297,5 +411,87 @@ def test_invalid_parcel_count_is_rejected_without_allocating_parts() -> None:
             with pytest.raises(MiSessionError, match="invalid MIOT parcel count"):
                 await session._recv_encrypted()
         assert auth.writes == []
+
+    asyncio.run(run())
+
+
+def test_outbound_miot_parcel_count_is_capped() -> None:
+    async def run() -> None:
+        auth = FakeAuth()
+        session = MiSession(auth, KEYS, timeout=0.1)  # type: ignore[arg-type]
+        oversized = b"x" * (MAX_MIOT_PARCELS * 16 + 1)
+
+        with pytest.raises(MiSessionError, match="request needs 65 parcels"):
+            await session._send_encrypted(oversized, 0)
+        assert auth.writes == []
+
+    asyncio.run(run())
+
+
+def test_auth_parcel_announcements_and_outbound_count_are_capped() -> None:
+    async def run() -> None:
+        client = FakeClient()
+        auth = MiAuthClient(client, timeout=0.1)
+
+        for announcement in (
+            b"\x00\x00\x00\x00\x01",
+            b"\x00\x00\x00\x00\x00\x00",
+            b"\x00\x00\x00\x00"
+            + (MAX_AUTH_PARCELS + 1).to_bytes(2, "little"),
+        ):
+            with pytest.raises(MiAuthError):
+                await auth._recv_parcel(announcement)
+
+        oversized = b"x" * (MAX_AUTH_PARCELS * 18 + 1)
+        with pytest.raises(MiAuthError, match="needs 65 parcels"):
+            await auth._send_parcel(
+                MIOT_NOTIFY_UUID,
+                b"\x00\x00\x00\x00\x01\x00",
+                oversized,
+            )
+        assert client.writes == []
+
+    asyncio.run(run())
+
+
+def test_login_hmac_mismatch_has_dedicated_invalid_token_error() -> None:
+    async def run() -> None:
+        auth = MiAuthClient(FakeClient(), timeout=0.1)
+        auth._write = AsyncMock()  # type: ignore[method-assign]
+        auth._send_parcel = AsyncMock()  # type: ignore[method-assign]
+        auth._recv_variant = AsyncMock(  # type: ignore[method-assign]
+            side_effect=(b"d" * 16, b"not-a-valid-hmac")
+        )
+
+        with pytest.raises(MiAuthInvalidTokenError, match="HMAC mismatch"):
+            await auth.login(b"t" * 12)
+
+    asyncio.run(run())
+
+
+def test_device_login_rejection_has_dedicated_invalid_token_error(
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        token = b"t" * 12
+        app_random = b"a" * 16
+        device_random = b"d" * 16
+        keys = crypto.derive_login(token, app_random, device_random)
+        device_info = crypto.hmac_sha256(
+            keys.dev_key, device_random + app_random
+        )
+        monkeypatch.setattr(secrets, "token_bytes", lambda _size: app_random)
+        auth = MiAuthClient(FakeClient(), timeout=0.1)
+        auth._write = AsyncMock()  # type: ignore[method-assign]
+        auth._send_parcel = AsyncMock()  # type: ignore[method-assign]
+        auth._recv_variant = AsyncMock(  # type: ignore[method-assign]
+            side_effect=(device_random, device_info)
+        )
+        auth._recv = AsyncMock(  # type: ignore[method-assign]
+            return_value=CFM_LOGIN_ERR
+        )
+
+        with pytest.raises(MiAuthInvalidTokenError, match="login failure"):
+            await auth.login(token)
 
     asyncio.run(run())

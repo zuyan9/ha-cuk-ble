@@ -33,14 +33,18 @@ For a Mi Home capture pulled from the rooted Android tablet:
 ```bash
 .venv/bin/python tools/decrypt_btsnoop_miot.py /tmp/btsnoop.log \
     --mac AA:BB:CC:DD:EE:FF \
-    --token 00112233445566778899aabb
+    --token-file ~/.cuktech_ble.token
 ```
 
 The script writes CSV to stdout. It assumes the AD1204U handles currently
 documented in [`docs/protocol.md`](../docs/protocol.md): auth on `0x0010`,
 MIOT write on `0x0019`, and MIOT notify on `0x001c`. If a firmware changes
 handles, pass `--auth-handle`, `--miot-write-handle`, or
-`--miot-notify-handle`.
+`--miot-notify-handle`. Keep the token file private (`chmod 600`); avoid
+putting tokens directly on the command line, where shell history and process
+listings can expose them. The decoder handles multiple login sessions and
+enforces explicit per-session/output limits; split unusually long captures if
+it reports a limit.
 
 `tablet_unlock.sh` defaults to the local bench tablet id (`HA1R80YR`). Use
 `tools/tablet_unlock.sh -s <adb-device-id>` for another attached device. If

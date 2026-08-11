@@ -6,15 +6,16 @@ import asyncio
 import logging
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
-
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_ADDRESS, CONF_TOKEN
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.core import callback
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -28,18 +29,6 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .lib.constants import AD1204_LOCAL_NAME, FE95_UUID
-from .lib.xiaomi_cloud import (
-    SERVERS,
-    CloudAuth,
-    CloudError,
-    QRLogin,
-    find_token_by_mac,
-    list_devices,
-    start_qr_login,
-    wait_for_qr_scan,
-)
-
 from .const import (
     CONF_BLUEZ_START_NOTIFY,
     CONF_CONNECTION_TIMEOUT,
@@ -51,6 +40,19 @@ from .const import (
     DEFAULT_IDLE_RELEASE,
     DEFAULT_UPDATE_PERIOD,
     DOMAIN,
+)
+from .lib.constants import AD1204_LOCAL_NAME, AD1204_PRODUCT_ID
+from .lib.fe95 import parse_fe95
+from .lib.scanner import get_service_data
+from .lib.xiaomi_cloud import (
+    SERVERS,
+    CloudAuth,
+    CloudError,
+    QRLogin,
+    find_token_by_mac,
+    list_devices,
+    start_qr_login,
+    wait_for_qr_scan,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,6 +81,13 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
         self._fetch_task: asyncio.Task[str | None] | None = None
         self._fetch_error: str | None = None
         self._fetched_token: str | None = None
+        self._cloud_session: aiohttp.ClientSession | None = None
+
+    @callback
+    def async_remove(self) -> None:
+        """Cancel cloud work and release the flow's private HTTP session."""
+        self._reset_cloud_attempt()
+        super().async_remove()
 
     async def async_step_bluetooth(
         self,
@@ -195,17 +204,16 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
         if self._qr is None:
-            session = async_get_clientsession(self.hass)
             try:
-                self._qr = await start_qr_login(session)
+                self._qr = await start_qr_login(self._get_cloud_session())
             except CloudError as exc:
                 _LOGGER.warning("QR login start failed: %s", exc)
-                return self.async_abort(reason="cloud_qr_start_failed")
+                self._qr_error = "cloud_qr_start_failed"
+                return await self.async_step_cloud_error()
 
         if self._qr_task is None:
-            session = async_get_clientsession(self.hass)
             self._qr_task = self.hass.async_create_task(
-                wait_for_qr_scan(session, self._qr)
+                wait_for_qr_scan(self._get_cloud_session(), self._qr)
             )
 
         if not self._qr_task.done():
@@ -238,7 +246,7 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
             assert self._auth is not None
             assert self._region is not None
             assert self._address is not None
-            session = async_get_clientsession(self.hass)
+            session = self._get_cloud_session()
             address = self._address
             auth = self._auth
             region = self._region
@@ -262,6 +270,9 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.warning("Device list fetch failed: %s", exc)
             self._fetch_error = "cloud_fetch_failed"
             return self.async_show_progress_done(next_step_id="cloud_error")
+        except asyncio.CancelledError:
+            self._fetch_error = "cloud_fetch_cancelled"
+            return self.async_show_progress_done(next_step_id="cloud_error")
 
         if not token_hex:
             self._fetch_error = "cloud_device_not_found"
@@ -283,11 +294,7 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         reason = self._fetch_error or self._qr_error or "cloud_unknown"
         if user_input is not None:
-            self._qr = None
-            self._qr_task = None
-            self._qr_error = None
-            self._fetch_task = None
-            self._fetch_error = None
+            self._reset_cloud_attempt()
             return await self.async_step_method()
         return self.async_show_form(
             step_id="cloud_error",
@@ -302,28 +309,53 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            token_hex = user_input[CONF_TOKEN].strip().lower().replace(" ", "")
-            try:
-                token = bytes.fromhex(token_hex)
-            except ValueError:
-                errors[CONF_TOKEN] = "token_not_hex"
-            else:
-                if len(token) != 12:
-                    errors[CONF_TOKEN] = "token_wrong_length"
-                else:
-                    return self._create_entry(token_hex)
+            token_hex, token_error = _normalize_token(user_input[CONF_TOKEN])
+            if token_error is None:
+                assert token_hex is not None
+                return self._create_entry(token_hex)
+            errors[CONF_TOKEN] = token_error
 
         return self.async_show_form(
             step_id="token",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_TOKEN): TextSelector(
-                        TextSelectorConfig(type=TextSelectorType.TEXT)
-                    )
-                }
-            ),
+            data_schema=_token_schema(),
             errors=errors,
             description_placeholders={"name": self._name or AD1204_LOCAL_NAME},
+        )
+
+    async def async_step_reauth(
+        self,
+        entry_data: dict[str, Any],
+    ) -> ConfigFlowResult:
+        """Ask for a replacement token after a confirmed login rejection."""
+        self._address = entry_data[CONF_ADDRESS]
+        self._name = entry_data.get(CONF_LOCAL_NAME) or DEFAULT_DEVICE_NAME
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Store a replacement token and reload the existing entry."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            token_hex, token_error = _normalize_token(user_input[CONF_TOKEN])
+            if token_error is None:
+                assert token_hex is not None
+                entry_id = self.context.get("entry_id")
+                assert entry_id is not None
+                entry = self.hass.config_entries.async_get_entry(entry_id)
+                assert entry is not None
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data={**entry.data, CONF_TOKEN: token_hex},
+                )
+            errors[CONF_TOKEN] = token_error
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=_token_schema(),
+            errors=errors,
+            description_placeholders={"name": self._name or DEFAULT_DEVICE_NAME},
         )
 
     @staticmethod
@@ -340,6 +372,36 @@ class AD1204UConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_TOKEN: token_hex,
             },
         )
+
+    def _get_cloud_session(self) -> aiohttp.ClientSession:
+        """Return a private cookie-enabled session for this config flow."""
+        if self._cloud_session is None or self._cloud_session.closed:
+            self._cloud_session = async_create_clientsession(
+                self.hass,
+                auto_cleanup=False,
+                cookie_jar=aiohttp.CookieJar(),
+            )
+        return self._cloud_session
+
+    def _reset_cloud_attempt(self) -> None:
+        """Cancel outstanding work and discard credentials and cookies."""
+        for task in (self._qr_task, self._fetch_task):
+            if task is None:
+                continue
+            if not task.done():
+                task.cancel()
+            task.add_done_callback(_consume_task_result)
+        self._qr = None
+        self._qr_task = None
+        self._qr_error = None
+        self._auth = None
+        self._fetch_task = None
+        self._fetch_error = None
+        self._fetched_token = None
+        self._region = None
+        if self._cloud_session is not None:
+            self._cloud_session.detach()
+            self._cloud_session = None
 
 
 class AD1204UOptionsFlow(OptionsFlow):
@@ -400,8 +462,39 @@ def _looks_like_ad1204u(info: BluetoothServiceInfoBleak) -> bool:
     advertisement = info.advertisement
     if advertisement.local_name == AD1204_LOCAL_NAME:
         return True
-    service_data = {
-        str(key).lower(): value
-        for key, value in (advertisement.service_data or {}).items()
-    }
-    return FE95_UUID in service_data
+    service_data = get_service_data(advertisement)
+    if service_data is None:
+        return False
+    try:
+        return parse_fe95(service_data).product_id == AD1204_PRODUCT_ID
+    except ValueError:
+        return False
+
+
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    """Retrieve a discarded cloud task result to avoid orphaned errors."""
+    if not task.cancelled():
+        task.exception()
+
+
+def _normalize_token(value: str) -> tuple[str | None, str | None]:
+    """Validate a BLE token and return canonical lowercase hex."""
+    token_hex = "".join(value.split()).lower()
+    try:
+        token = bytes.fromhex(token_hex)
+    except ValueError:
+        return None, "token_not_hex"
+    if len(token) != 12:
+        return None, "token_wrong_length"
+    return token.hex(), None
+
+
+def _token_schema() -> vol.Schema:
+    """Return the password-masked BLE token input schema."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_TOKEN): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            )
+        }
+    )

@@ -33,7 +33,7 @@ async def _run(address: str, token_file: Path, did: str | None, debug: bool) -> 
 
     print(f"connecting to {address}...", file=sys.stderr)
     async with BleakClient(address, timeout=20) as client:
-        print(f"connected; starting register handshake", file=sys.stderr)
+        print("connected; starting register handshake", file=sys.stderr)
         auth = MiAuthClient(client, timeout=15, bluez_start_notify=True)
         async with auth:
             result = await auth.register(did=did)
@@ -49,7 +49,6 @@ async def _run(address: str, token_file: Path, did: str | None, debug: bool) -> 
     token_file.write_text(json.dumps(payload, indent=2))
     os.chmod(token_file, 0o600)
     print(f"register OK — token saved to {token_file}", file=sys.stderr)
-    print(json.dumps(payload, indent=2))
     return 0
 
 

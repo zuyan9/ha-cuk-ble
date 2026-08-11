@@ -4,14 +4,16 @@
             "already_configured": "This CUKTECH AD1204U is already configured.",
             "no_devices_found": "No CUKTECH AD1204U chargers were found.",
             "not_supported": "This Bluetooth device is not a CUKTECH AD1204U.",
-            "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login."
+            "reauth_successful": "Re-authentication was successful."
         },
         "error": {
             "token_not_hex": "Token must be a hex string.",
             "token_wrong_length": "Token must decode to 12 bytes (24 hex characters).",
             "cloud_qr_failed": "QR login failed or timed out. Please try again.",
+            "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login.",
             "cloud_qr_cancelled": "QR login was cancelled.",
             "cloud_fetch_failed": "Could not fetch the device list from the Xiaomi cloud.",
+            "cloud_fetch_cancelled": "Fetching the Xiaomi device list was cancelled.",
             "cloud_device_not_found": "This charger was not found in the selected Xiaomi region. Try a different region.",
             "cloud_unknown": "Unknown cloud error."
         },
@@ -56,6 +58,13 @@
                 "description": "Paste the 24-character (12-byte) hex token for this device. You can fetch it from your Xiaomi account using the tools/ad1204u_fetch_token.py script shipped with this integration.",
                 "data": {
                     "token": "BLE token (hex)"
+                }
+            },
+            "reauth_confirm": {
+                "title": "Update BLE token for {name}",
+                "description": "The charger rejected its saved BLE token. Enter a replacement 24-character (12-byte) hex token.",
+                "data": {
+                    "token": "New BLE token (hex)"
                 }
             }
         }
@@ -118,48 +127,6 @@
             },
             "screen_dir_lock": {
                 "name": "Lock screen orientation"
-            },
-            "port_c1_power": {
-                "name": "Port C1 power"
-            },
-            "port_c2_power": {
-                "name": "Port C2 power"
-            },
-            "port_c3_power": {
-                "name": "Port C3 power"
-            },
-            "port_a_power": {
-                "name": "Port USB-A power"
-            },
-            "c1_pd_protocol": {
-                "name": "PD Protocol"
-            },
-            "c1_pps_protocol": {
-                "name": "PPS Protocol"
-            },
-            "c1_ufcs_protocol": {
-                "name": "UFCS Protocol"
-            },
-            "c2_pd_protocol": {
-                "name": "PD Protocol"
-            },
-            "c2_pps_protocol": {
-                "name": "PPS Protocol"
-            },
-            "c2_ufcs_protocol": {
-                "name": "UFCS Protocol"
-            },
-            "c3_ufcs_protocol": {
-                "name": "UFCS Protocol"
-            },
-            "c3_scp_protocol": {
-                "name": "SCP Protocol"
-            },
-            "a_ufcs_protocol": {
-                "name": "UFCS Protocol"
-            },
-            "a_scp_protocol": {
-                "name": "SCP Protocol"
             }
         },
         "select": {

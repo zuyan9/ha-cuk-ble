@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -66,7 +67,10 @@ def _rc4_decrypt_b64(key_b64: str, payload_b64: str) -> bytes:
 
 
 def _strip_jsonp(text: str) -> dict[str, Any]:
-    return json.loads(text.replace("&&&START&&&", "").strip())
+    data = json.loads(text.replace("&&&START&&&", "").strip())
+    if not isinstance(data, dict):
+        raise ValueError("response root must be a JSON object")
+    return data
 
 
 class CloudError(Exception):
@@ -128,10 +132,19 @@ async def start_qr_login(session: aiohttp.ClientSession) -> QRLogin:
         "_dc": str(int(time.time() * 1000)),
     }
     headers = {"User-Agent": _fresh_user_agent()}
-    async with session.get(url, params=params, headers=headers, cookies=cookies) as r:
-        text = await r.text()
-        if r.status != 200:
-            raise CloudError(f"QR login request failed: HTTP {r.status}")
+    try:
+        async with session.get(
+            url,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r:
+            text = await r.text()
+            if r.status != 200:
+                raise CloudError(f"QR login request failed: HTTP {r.status}")
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise CloudError(f"QR login request failed: {exc}") from exc
     try:
         data = _strip_jsonp(text)
     except ValueError as exc:
@@ -145,8 +158,8 @@ async def start_qr_login(session: aiohttp.ClientSession) -> QRLogin:
             device_id=device_id,
             cookies=cookies,
         )
-    except KeyError as exc:
-        raise CloudError(f"QR login response missing {exc}") from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CloudError(f"QR login response invalid: {exc}") from exc
 
 
 async def poll_qr_login(session: aiohttp.ClientSession, qr: QRLogin) -> CloudAuth:
@@ -161,12 +174,13 @@ async def poll_qr_login(session: aiohttp.ClientSession, qr: QRLogin) -> CloudAut
             qr.lp_url,
             headers=headers,
             cookies=qr.cookies,
-            timeout=aiohttp.ClientTimeout(total=30),
+            timeout=aiohttp.ClientTimeout(total=35),
         ) as r:
             text = await r.text()
-            status = r.status
-    except asyncio.TimeoutError as exc:
-        raise QRLoginPending() from exc
+            if r.status != 200:
+                raise CloudError(f"QR poll request failed: HTTP {r.status}")
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise CloudError(f"QR poll request failed: {exc}") from exc
 
     try:
         data = _strip_jsonp(text)
@@ -185,18 +199,25 @@ async def poll_qr_login(session: aiohttp.ClientSession, qr: QRLogin) -> CloudAut
     if not location:
         raise CloudError("QR login missing location")
 
-    async with session.get(
-        location,
-        headers=headers,
-        cookies=qr.cookies,
-        allow_redirects=True,
-    ) as r2:
-        service_token = None
-        for cookie in session.cookie_jar:
-            if cookie.key == "serviceToken":
-                service_token = cookie.value
-                break
-    if not service_token:
+    try:
+        async with session.get(
+            location,
+            headers=headers,
+            cookies=qr.cookies,
+            allow_redirects=True,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r2:
+            await r2.read()
+            if r2.status >= 400:
+                raise CloudError(f"QR login redirect failed: HTTP {r2.status}")
+            cookie_url = r2.url
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise CloudError(f"QR login redirect failed: {exc}") from exc
+
+    service_cookie = session.cookie_jar.filter_cookies(cookie_url).get(
+        "serviceToken"
+    )
+    if service_cookie is None or not service_cookie.value:
         raise CloudError("serviceToken cookie not set after location fetch")
 
     return CloudAuth(
@@ -204,7 +225,7 @@ async def poll_qr_login(session: aiohttp.ClientSession, qr: QRLogin) -> CloudAut
         cuser_id=str(data.get("cUserId", "")),
         ssecurity=str(data["ssecurity"]),
         pass_token=str(data.get("passToken", "")),
-        service_token=str(service_token),
+        service_token=str(service_cookie.value),
         device_id=qr.device_id,
     )
 
@@ -258,14 +279,16 @@ async def _encrypted_post(
     millis = int(time.time() * 1000)
     nonce_bytes = os.urandom(8) + (millis // 60000).to_bytes(4, "big")
     nonce = base64.b64encode(nonce_bytes).decode()
-    signed_nonce = _signed_nonce(auth.ssecurity, nonce)
-
-    params["rc4_hash__"] = _enc_signature(url, "POST", signed_nonce, params)
-    for k, v in params.items():
-        params[k] = _rc4_encrypt_b64(signed_nonce, v)
-    params["signature"] = _enc_signature(url, "POST", signed_nonce, params)
-    params["ssecurity"] = auth.ssecurity
-    params["_nonce"] = nonce
+    try:
+        signed_nonce = _signed_nonce(auth.ssecurity, nonce)
+        params["rc4_hash__"] = _enc_signature(url, "POST", signed_nonce, params)
+        for key, value in params.items():
+            params[key] = _rc4_encrypt_b64(signed_nonce, value)
+        params["signature"] = _enc_signature(url, "POST", signed_nonce, params)
+        params["ssecurity"] = auth.ssecurity
+        params["_nonce"] = nonce
+    except (binascii.Error, IndexError, ValueError) as exc:
+        raise CloudError(f"{path}: request signing failed: {exc}") from exc
 
     headers = {
         "Accept-Encoding": "identity",
@@ -284,15 +307,27 @@ async def _encrypted_post(
         "dst_offset": "0",
         "channel": "MI_APP_STORE",
     }
-    async with session.post(url, headers=headers, cookies=cookies, params=params) as r:
-        text = await r.text()
-        if r.status != 200:
-            raise CloudError(f"{path}: HTTP {r.status}")
+    try:
+        async with session.post(
+            url,
+            headers=headers,
+            cookies=cookies,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r:
+            text = await r.text()
+            if r.status != 200:
+                raise CloudError(f"{path}: HTTP {r.status}")
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        raise CloudError(f"{path}: request failed: {exc}") from exc
     try:
         decoded = _rc4_decrypt_b64(_signed_nonce(auth.ssecurity, nonce), text)
-        return json.loads(decoded)
-    except (ValueError, json.JSONDecodeError) as exc:
+        response = json.loads(decoded)
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
         raise CloudError(f"{path}: decrypt/parse failed: {exc}") from exc
+    if not isinstance(response, dict):
+        raise CloudError(f"{path}: response root must be a JSON object")
+    return response
 
 
 async def list_devices(
@@ -308,7 +343,17 @@ async def list_devices(
         "/home/device_list",
         '{"getVirtualModel":true,"getHuamiDevices":1}',
     )
-    return ((resp or {}).get("result") or {}).get("list") or []
+    result = resp.get("result")
+    if not isinstance(result, dict):
+        raise CloudError("Device-list response has an invalid result object")
+    devices = result.get("list")
+    if devices is None:
+        return []
+    if not isinstance(devices, list) or not all(
+        isinstance(device, dict) for device in devices
+    ):
+        raise CloudError("Device-list response has an invalid device list")
+    return devices
 
 
 def normalize_mac(mac: str) -> str:
@@ -318,10 +363,20 @@ def normalize_mac(mac: str) -> str:
 def find_token_by_mac(devices: list[dict[str, Any]], mac: str) -> str | None:
     """Find a device by MAC and return the 24-hex-char (12-byte) BLE bindkey."""
     target = normalize_mac(mac)
+    invalid_token_error: str | None = None
     for dev in devices:
         if normalize_mac(str(dev.get("mac", ""))) != target:
             continue
         token = str(dev.get("token", "")).strip().lower()
-        if len(token) in (24, 32):
-            return token[:24]
+        if len(token) not in (24, 32):
+            invalid_token_error = "Matching Xiaomi device has an invalid BLE token length"
+            continue
+        try:
+            bytes.fromhex(token)
+        except ValueError:
+            invalid_token_error = "Matching Xiaomi device has a non-hex BLE token"
+            continue
+        return token[:24]
+    if invalid_token_error is not None:
+        raise CloudError(invalid_token_error)
     return None

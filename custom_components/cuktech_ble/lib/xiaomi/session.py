@@ -23,9 +23,9 @@ Key is ``app_key`` for host→device and ``dev_key`` for device→host.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from contextlib import suppress
-import logging
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -33,7 +33,6 @@ from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 
 from .auth import MiAuthClient, MiAuthError, MiSessionKeys, _ChannelQueue, _chunk_parcel
 from .protocol import (
-    AVDTP_UUID,
     OFFICIAL_ACK,
     PARCEL_CHUNK_SIZE,
     RCV_OK,
@@ -52,6 +51,7 @@ MIOT_NOTIFY_UUID = "0000001b-0000-1000-8000-00805f9b34fb"
 MIOT_ANN_CODE = 0x00
 MAX_CAPTURED_FRAMES = 16
 MAX_MIOT_PARCELS = 64
+MAX_MIOT_COUNTER = 0xFFFF
 EXPECTED_RESPONSE_OPCODES: dict[bytes, frozenset[bytes]] = {
     b"\x05\x20": frozenset((b"\x05\x20",)),
     b"\x0c\x20": frozenset((b"\x0b\x20",)),
@@ -62,6 +62,7 @@ EXPECTED_RESPONSE_OPCODES: dict[bytes, frozenset[bytes]] = {
 
 NonceBuilder = Callable[[bytes, int], bytes]
 NotificationCallback = Callable[[bytes], None]
+FatalErrorCallback = Callable[[Exception], None]
 
 
 def mible_v1_nonce(iv: bytes, counter: int) -> bytes:
@@ -104,6 +105,10 @@ class MiSessionError(MiAuthError):
     pass
 
 
+class MiSessionReauthenticationRequired(MiSessionError):
+    """The session keys must be replaced before another encrypted frame."""
+
+
 class MiSession:
     """Encrypted MIOT transport over an authenticated ``MiAuthClient``.
 
@@ -120,6 +125,7 @@ class MiSession:
         profile: MiotCipherProfile = DEFAULT_PROFILE,
         timeout: float = 10.0,
         notification_callback: NotificationCallback | None = None,
+        fatal_error_callback: FatalErrorCallback | None = None,
     ) -> None:
         self._auth = auth
         self._keys = keys
@@ -134,6 +140,8 @@ class MiSession:
         self._tx_counter = 0
         self._rx_counter = 0
         self._notification_callback = notification_callback
+        self._fatal_error_callback = fatal_error_callback
+        self._fatal_error_reported = False
         self._request_lock = asyncio.Lock()
         self._pending_seq: bytes | None = None
         self._pending_opcodes: frozenset[bytes] = frozenset()
@@ -155,6 +163,14 @@ class MiSession:
     @property
     def captured_frames(self) -> list[MiotFrame]:
         return list(self._rx_raw)
+
+    @property
+    def requires_reauthentication(self) -> bool:
+        """Return whether either encryption counter has been exhausted."""
+        return (
+            self._tx_counter > MAX_MIOT_COUNTER
+            or self._rx_counter > MAX_MIOT_COUNTER
+        )
 
     async def __aenter__(self) -> "MiSession":
         await self.subscribe()
@@ -237,6 +253,10 @@ class MiSession:
     def encrypt(self, plaintext: bytes, counter: int | None = None) -> bytes:
         if counter is None:
             counter = self._tx_counter
+        if not 0 <= counter <= MAX_MIOT_COUNTER:
+            raise MiSessionReauthenticationRequired(
+                "MIOT TX counter exhausted; reconnect and authenticate again"
+            )
         nonce = self._profile.tx_nonce(self._keys.app_iv, counter)
         return self._app_ccm.encrypt(nonce, plaintext, self._profile.aad or None)
 
@@ -288,9 +308,18 @@ class MiSession:
             self._request_task = request_task
             counter = self._tx_counter
             try:
+                if counter > MAX_MIOT_COUNTER:
+                    error = MiSessionReauthenticationRequired(
+                        "MIOT TX counter exhausted; reconnect and authenticate again"
+                    )
+                    self._report_fatal_error(error)
+                    raise error
+                # Spend the nonce before the first fallible operation. If a
+                # write is cancelled or its result is uncertain, this session
+                # can never encrypt another request with the same nonce.
+                self._tx_counter = counter + 1
                 ct = self.encrypt(plaintext, counter)
                 await self._send_encrypted(ct, counter)
-                self._tx_counter = (counter + 1) & 0xFFFF
                 try:
                     return await asyncio.wait_for(response, self._timeout)
                 except asyncio.TimeoutError as exc:
@@ -322,8 +351,15 @@ class MiSession:
                     )
                 frame = await self._recv_encrypted()
                 try:
+                    if frame.counter < self._rx_counter:
+                        raise MiSessionReauthenticationRequired(
+                            "MIOT RX counter repeated or moved backwards; "
+                            "reconnect and authenticate again"
+                        )
                     plaintext = self.decrypt(frame.ciphertext, frame.counter)
                 except Exception as exc:  # noqa: BLE001
+                    if isinstance(exc, MiSessionReauthenticationRequired):
+                        raise
                     LOGGER.debug(
                         "skip undecryptable frame counter=%d: %s",
                         frame.counter,
@@ -331,7 +367,7 @@ class MiSession:
                     )
                     continue
 
-                self._rx_counter = (frame.counter + 1) & 0xFFFF
+                self._rx_counter = frame.counter + 1
                 response = self._pending_response
                 if (
                     response is not None
@@ -341,26 +377,30 @@ class MiSession:
                     and plaintext[:2] in self._pending_opcodes
                 ):
                     response.set_result(plaintext)
-                    continue
-
-                is_property_event = (
-                    plaintext[:2] == b"\x0f\x20"
-                    or (
-                        len(plaintext) >= 5
-                        and plaintext[:2] == b"\x0c\x20"
-                        and plaintext[4] == 0x04
-                    )
-                )
-                if is_property_event and self._notification_callback is not None:
-                    try:
-                        self._notification_callback(plaintext)
-                    except Exception:  # noqa: BLE001
-                        LOGGER.exception("MIOT notification callback failed")
                 else:
-                    LOGGER.debug(
-                        "unhandled MIOT plaintext counter=%d: %s",
-                        frame.counter,
-                        plaintext.hex(),
+                    is_property_event = (
+                        plaintext[:2] == b"\x0f\x20"
+                        or (
+                            len(plaintext) >= 5
+                            and plaintext[:2] == b"\x0c\x20"
+                            and plaintext[4] == 0x04
+                        )
+                    )
+                    if is_property_event and self._notification_callback is not None:
+                        try:
+                            self._notification_callback(plaintext)
+                        except Exception:  # noqa: BLE001
+                            LOGGER.exception("MIOT notification callback failed")
+                    else:
+                        LOGGER.debug(
+                            "unhandled MIOT plaintext counter=%d: %s",
+                            frame.counter,
+                            plaintext.hex(),
+                        )
+
+                if self._rx_counter > MAX_MIOT_COUNTER:
+                    raise MiSessionReauthenticationRequired(
+                        "MIOT RX counter exhausted; reconnect and authenticate again"
                     )
         except asyncio.CancelledError:
             raise
@@ -371,7 +411,21 @@ class MiSession:
                 response.set_exception(
                     MiSessionError(f"MIOT notification reader failed: {exc}")
                 )
+            self._report_fatal_error(exc)
             LOGGER.debug("MIOT notification reader stopped", exc_info=True)
+
+    def _report_fatal_error(self, error: Exception) -> None:
+        """Notify the owner once that this session can no longer be used."""
+        if self._closing or self._fatal_error_reported:
+            return
+        self._fatal_error_reported = True
+        callback = self._fatal_error_callback
+        if callback is None:
+            return
+        try:
+            callback(error)
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("MIOT fatal-error callback failed")
 
     async def _send_encrypted(self, ct: bytes, counter: int) -> None:
         mtu = getattr(self._auth._client, "mtu_size", None)
@@ -382,6 +436,11 @@ class MiSession:
         )
         counter_prefix = counter.to_bytes(2, "little")
         frames = _chunk_parcel(ct, payload_cap)
+        if len(frames) > MAX_MIOT_PARCELS:
+            raise MiSessionError(
+                f"MIOT request needs {len(frames)} parcels; "
+                f"maximum is {MAX_MIOT_PARCELS}"
+            )
         announcement = bytes([0x00, 0x00, 0x00, MIOT_ANN_CODE]) + len(frames).to_bytes(
             2, "little"
         )

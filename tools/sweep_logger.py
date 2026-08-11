@@ -17,7 +17,6 @@ import asyncio
 import json
 import struct
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -27,7 +26,6 @@ import usbpdpy
 from bleak import BleakClient, BleakScanner
 
 from cuktech_ble.ports import (
-    PIID_TO_PORT,
     PORTS,
     PORT_PROPERTY_PIID,
     decode_port_info,
