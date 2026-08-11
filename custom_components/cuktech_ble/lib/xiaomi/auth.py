@@ -42,6 +42,8 @@ from .protocol import (
 
 LOGGER = logging.getLogger(__name__)
 
+MAX_AUTH_PARCELS = 64
+
 
 @dataclass(frozen=True)
 class MiSessionKeys:
@@ -87,6 +89,10 @@ class _ChannelQueue:
 
 class MiAuthError(Exception):
     pass
+
+
+class MiAuthInvalidTokenError(MiAuthError):
+    """The supplied token cannot authenticate this device."""
 
 
 class MiAuthClient:
@@ -182,7 +188,11 @@ class MiAuthClient:
             data = await self._recv(channel)
             if data == expected:
                 return
-            LOGGER.debug("discarding unexpected frame on %s: %s", channel.uuid, data.hex())
+            LOGGER.debug(
+                "discarding unexpected frame on %s: %s",
+                channel.uuid,
+                data.hex(),
+            )
 
     async def _write(self, uuid: str, payload: bytes) -> None:
         LOGGER.debug("→ %s: %s", uuid, payload.hex())
@@ -197,8 +207,17 @@ class MiAuthClient:
         required for the MTU. We recompute the frame count and rewrite the
         announcement's byte[4:6] to match.
         """
+        if len(announcement) < 6:
+            raise MiAuthError(
+                f"parcel announcement is shorter than 6 bytes: {announcement.hex()}"
+            )
         chunk_size = self._parcel_chunk_size()
         frames = _chunk_parcel(data, chunk_size)
+        if len(frames) > MAX_AUTH_PARCELS:
+            raise MiAuthError(
+                f"auth payload needs {len(frames)} parcels; "
+                f"maximum is {MAX_AUTH_PARCELS}"
+            )
         announcement = (
             announcement[:4]
             + len(frames).to_bytes(2, "little")
@@ -226,19 +245,29 @@ class MiAuthClient:
 
     async def _recv_parcel(self, announcement: bytes) -> bytes:
         """Given an announcement already received, collect N parcels."""
+        if len(announcement) < 6:
+            raise MiAuthError(
+                f"parcel announcement is shorter than 6 bytes: {announcement.hex()}"
+            )
         expected = int.from_bytes(announcement[4:6], "little")
-        if expected == 0:
-            raise MiAuthError(f"parcel announcement claims 0 frames: {announcement.hex()}")
+        if not 1 <= expected <= MAX_AUTH_PARCELS:
+            raise MiAuthError(
+                f"invalid auth parcel count {expected}; "
+                f"maximum is {MAX_AUTH_PARCELS}"
+            )
         await self._write(AVDTP_UUID, RCV_RDY)
         frames: dict[int, bytes] = {}
         while len(frames) < expected:
             data = await self._recv(self._avdtp)
             if len(data) < 2:
-                continue
+                raise MiAuthError(f"short auth parcel: {data.hex()}")
             idx = int.from_bytes(data[:2], "little")
             if idx == 0 or idx > expected:
-                LOGGER.debug("ignoring rogue parcel idx=%d len=%d", idx, len(data))
-                continue
+                raise MiAuthError(
+                    f"auth parcel index {idx} outside 1..{expected}"
+                )
+            if idx in frames:
+                raise MiAuthError(f"duplicate auth parcel index {idx}")
             frames[idx] = data[2:]
         await self._write(AVDTP_UUID, RCV_OK)
         return b"".join(frames[i] for i in sorted(frames))
@@ -354,7 +383,9 @@ class MiAuthClient:
             return payload
         if variant == 0x00:
             return await self._recv_parcel(announcement)
-        raise MiAuthError(f"unknown variant byte 0x{variant:02x} in {announcement.hex()}")
+        raise MiAuthError(
+            f"unknown variant byte 0x{variant:02x} in {announcement.hex()}"
+        )
 
     # ------------------------------------------------------------ LOGIN
     async def login(self, token: bytes) -> MiSessionKeys:
@@ -382,7 +413,7 @@ class MiAuthClient:
         keys = crypto.derive_login(token, app_rand, dev_rand)
         expected_dev_info = crypto.hmac_sha256(keys.dev_key, dev_rand + app_rand)
         if dev_info != expected_dev_info:
-            raise MiAuthError(
+            raise MiAuthInvalidTokenError(
                 "device HMAC mismatch — token is wrong or register required"
             )
 
@@ -401,7 +432,9 @@ class MiAuthClient:
                 app_iv=keys.app_iv,
             )
         if conf == CFM_LOGIN_ERR:
-            raise MiAuthError("device reported login failure (23 00 00 00)")
+            raise MiAuthInvalidTokenError(
+                "device reported login failure (23 00 00 00)"
+            )
         raise MiAuthError(f"unexpected login confirmation: {conf.hex()}")
 
 

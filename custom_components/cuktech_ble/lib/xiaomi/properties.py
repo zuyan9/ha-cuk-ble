@@ -166,7 +166,7 @@ def encode_set_property(
 
 def parse_set_response(pt: bytes) -> list[tuple[int, int, int]]:
     """Decode a 0x0b 0x20 response. Returns [(siid, piid, status), ...]."""
-    if len(pt) < 6 or pt[:2] != SET_RESPONSE_OPCODE:
+    if len(pt) < 6 or pt[:2] != SET_RESPONSE_OPCODE or pt[4] != 0x01:
         raise MiotProtocolError(f"bad set-response header: {pt[:6].hex()}")
     count = pt[5]
     i = 6
@@ -179,6 +179,8 @@ def parse_set_response(pt: bytes) -> list[tuple[int, int, int]]:
         status = int.from_bytes(pt[i + 3 : i + 5], "little")
         out.append((siid, piid, status))
         i += 5
+    if i != len(pt):
+        raise MiotProtocolError(f"unexpected trailing set-response data: {pt.hex()}")
     return out
 
 
@@ -197,9 +199,19 @@ async def set_property(
     request = encode_set_property(seq, siid, piid, value, u32=u32)
     response_pt = await session.send_request(request)
     results = parse_set_response(response_pt)
-    for r_siid, r_piid, r_status in results:
-        if (r_siid, r_piid) == (siid, piid) and r_status != 0:
-            raise MiotProtocolError(
-                f"set_property(siid={siid}, piid=0x{piid:x}) failed "
-                f"with status 0x{r_status:04x}"
-            )
+    if len(results) != 1:
+        raise MiotProtocolError(
+            f"set_property(siid={siid}, piid=0x{piid:x}) expected exactly "
+            f"one result, got {len(results)}"
+        )
+    r_siid, r_piid, r_status = results[0]
+    if (r_siid, r_piid) != (siid, piid):
+        raise MiotProtocolError(
+            f"set_property(siid={siid}, piid=0x{piid:x}) got result for "
+            f"siid={r_siid}, piid=0x{r_piid:x}"
+        )
+    if r_status != 0:
+        raise MiotProtocolError(
+            f"set_property(siid={siid}, piid=0x{piid:x}) failed "
+            f"with status 0x{r_status:04x}"
+        )

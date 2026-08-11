@@ -25,11 +25,7 @@ from pathlib import Path
 from bleak import BleakClient, BleakScanner
 
 from cuktech_ble.xiaomi import MiAuthClient
-from cuktech_ble.xiaomi.session import (
-    MIOT_NOTIFY_UUID,
-    MIOT_WRITE_UUID,
-    MiSession,
-)
+from cuktech_ble.xiaomi.session import MiSession
 
 # The full AD1204U property set Mi Home queries in one shot.
 DEFAULT_QUERY: list[tuple[int, int]] = [
@@ -57,7 +53,6 @@ def parse_response(pt: bytes) -> tuple[int, int, list[dict]]:
         raise ValueError(f"bad response header: {pt[:6].hex()}")
     seq = int.from_bytes(pt[2:4], "little")
     ok = pt[4]
-    count = pt[5]
     i = 6
     items = []
     while i < len(pt):

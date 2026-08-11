@@ -13,8 +13,8 @@ Strategy: push-driven BLE session with periodic reconciliation and an idle lease
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 import logging
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -22,11 +22,13 @@ from typing import Any
 from bleak import BleakClient
 from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection
-
 from homeassistant.components import bluetooth
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .lib.firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
 from .lib.ports import (
     PIID_TO_PORT,
     PORTS,
@@ -34,8 +36,8 @@ from .lib.ports import (
     decode_pdo_caps,
     decode_port_info,
 )
-from .lib.firmware import FIRMWARE_VERSION_UUID, decode_firmware_version
 from .lib.xiaomi import MiAuthClient
+from .lib.xiaomi.auth import MiAuthInvalidTokenError
 from .lib.xiaomi.properties import (
     MiotProtocolError,
     PropertyValue,
@@ -73,6 +75,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self,
         hass: HomeAssistant,
         *,
+        config_entry: ConfigEntry[Any],
         address: str,
         token: bytes,
         name: str,
@@ -84,6 +87,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name=f"ad1204u {address}",
             update_interval=timedelta(seconds=update_interval),
         )
@@ -95,8 +99,10 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._bluez_start_notify = bluez_start_notify
 
         self._client: BleakClient | None = None
+        self._connecting_client: BleakClient | None = None
         self._auth: MiAuthClient | None = None
         self._session: MiSession | None = None
+        self._connection_generation = 0
         self.firmware_version: str | None = None
         self._lock = asyncio.Lock()
         self._idle_task: asyncio.Task[None] | None = None
@@ -113,9 +119,17 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
 
     def _handle_disconnect(self, client: BleakClient) -> None:
         """Mark unavailable and clean up a disconnected session on the HA loop."""
+        if self._connecting_client is client:
+            # _ensure_connected() owns cleanup until the setup is published as
+            # the current connection. Invalidating its generation prevents a
+            # late successful login from installing this disconnected client.
+            self._connection_generation += 1
+            _LOGGER.debug("AD1204U %s disconnected during setup", self.address)
+            return
         if self._client is not client:
             return
         _LOGGER.debug("AD1204U %s disconnected unexpectedly", self.address)
+        self._connection_generation += 1
         # Invalidate push publication before marking the coordinator failed.
         # A notification already queued on the event loop must not make stale
         # data available again after this disconnect.
@@ -127,6 +141,29 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         task = self.hass.async_create_background_task(
             self._cleanup_disconnected_client(client),
             name=f"ad1204u_disconnect_{self.address}",
+        )
+        self._disconnect_task = task
+        task.add_done_callback(self._disconnect_cleanup_finished)
+
+    def _handle_session_error(
+        self, session: MiSession | None, error: Exception
+    ) -> None:
+        """Fail and tear down a session whose notification reader stopped."""
+        if session is None or self._session is not session:
+            return
+        client = self._client
+        if client is None:
+            return
+        _LOGGER.debug("AD1204U %s MIOT session failed: %s", self.address, error)
+        self._connection_generation += 1
+        self._baseline_session = None
+        self._notification_publish_pending = False
+        self.async_set_update_error(error)
+        if self._disconnect_task is not None and not self._disconnect_task.done():
+            return
+        task = self.hass.async_create_background_task(
+            self._cleanup_disconnected_client(client),
+            name=f"ad1204u_session_error_{self.address}",
         )
         self._disconnect_task = task
         task.add_done_callback(self._disconnect_cleanup_finished)
@@ -159,7 +196,10 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 await idle_task
 
         disconnect_task = self._disconnect_task
-        if disconnect_task is not None and disconnect_task is not asyncio.current_task():
+        if (
+            disconnect_task is not None
+            and disconnect_task is not asyncio.current_task()
+        ):
             with suppress(asyncio.CancelledError):
                 await disconnect_task
 
@@ -168,8 +208,28 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         if self._shutdown_requested:
             raise UpdateFailed("Coordinator is shutting down")
 
-        if self._session is not None and self._client is not None and self._client.is_connected:
-            return self._session
+        if (
+            self._session is not None
+            and self._client is not None
+            and self._client.is_connected
+        ):
+            if not self._session.requires_reauthentication:
+                return self._session
+            _LOGGER.debug(
+                "reconnecting %s before MIOT encryption counter reuse",
+                self.address,
+            )
+            await self._disconnect()
+
+        # A missed/late disconnect callback can leave the old objects attached
+        # even though the client is no longer connected. Release them before
+        # establishing a replacement so setup can never overwrite resources.
+        if (
+            self._client is not None
+            or self._auth is not None
+            or self._session is not None
+        ):
+            await self._disconnect()
 
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
@@ -177,6 +237,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         if ble_device is None:
             raise UpdateFailed(f"{self.address} not currently visible over Bluetooth")
 
+        setup_generation = self._connection_generation
         _LOGGER.debug("connecting to %s", self.address)
         client = await establish_connection(
             BleakClient,
@@ -186,6 +247,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             timeout=self._connection_timeout,
             disconnected_callback=self._on_disconnect,
         )
+        self._connecting_client = client
         auth: MiAuthClient | None = None
         session: MiSession | None = None
         try:
@@ -212,11 +274,15 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             def _on_notification(plaintext: bytes) -> None:
                 self._handle_notification(session, plaintext)
 
+            def _on_fatal_error(error: Exception) -> None:
+                self._handle_session_error(session, error)
+
             session = MiSession(
                 auth,
                 keys,
                 timeout=self._connection_timeout,
                 notification_callback=_on_notification,
+                fatal_error_callback=_on_fatal_error,
             )
             await session.subscribe()
             await session.initialize()
@@ -226,23 +292,51 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             # with b3 reading a non-standard voltage). A short delay here
             # prevents that glitch from ever reaching HA sensors.
             await asyncio.sleep(0.3)
-        except Exception:
-            if session is not None:
-                await session.unsubscribe()
-            if auth is not None:
-                await auth.unsubscribe()
+            if (
+                self._shutdown_requested
+                or setup_generation != self._connection_generation
+                or not client.is_connected
+            ):
+                raise UpdateFailed("BLE connection changed during setup")
+        except BaseException:
+            if self._connecting_client is client:
+                self._connecting_client = None
+            cleanup_task = asyncio.create_task(
+                self._cleanup_setup_resources(session, auth, client),
+                name=f"ad1204u_failed_setup_{self.address}",
+            )
             try:
-                await client.disconnect()
-            except Exception:  # noqa: BLE001
-                _LOGGER.debug("disconnect after failed setup", exc_info=True)
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                # A second cancellation must not strand the established BLE
+                # connection. Finish the already-running bounded cleanup.
+                await cleanup_task
             raise
 
+        self._connecting_client = None
+        self._connection_generation += 1
         self._client = client
         self._auth = auth
         self._session = session
         self._arm_idle_release(client)
         _LOGGER.info("AD1204U %s connected + logged in", self.address)
         return session
+
+    async def _cleanup_setup_resources(
+        self,
+        session: MiSession | None,
+        auth: MiAuthClient | None,
+        client: BleakClient,
+    ) -> None:
+        """Release a connection that failed or was cancelled during setup."""
+        await self._cleanup_resources(
+            (
+                ("session", session, "unsubscribe"),
+                ("auth", auth, "unsubscribe"),
+                ("client", client, "disconnect"),
+            ),
+            context="after incomplete setup",
+        )
 
     async def _read_firmware_version(self, client: BleakClient) -> str | None:
         """Read the plain GATT firmware-version characteristic, if present."""
@@ -255,6 +349,8 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
 
     async def _disconnect(self) -> None:
         session, auth, client = self._session, self._auth, self._client
+        if session is not None or auth is not None or client is not None:
+            self._connection_generation += 1
         self._session = None
         self._auth = None
         self._client = None
@@ -262,19 +358,46 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._pending_notification_values.clear()
         self._baseline_session = None
         self._notification_publish_pending = False
-        for label, obj, coro_name in (
-            ("session", session, "unsubscribe"),
-            ("auth", auth, "unsubscribe"),
-            ("client", client, "disconnect"),
-        ):
+        await self._cleanup_resources(
+            (
+                ("session", session, "unsubscribe"),
+                ("auth", auth, "unsubscribe"),
+                ("client", client, "disconnect"),
+            ),
+        )
+        if client is not None:
+            _LOGGER.info("AD1204U %s disconnected", self.address)
+
+    async def _cleanup_resources(
+        self,
+        resources: tuple[tuple[str, Any | None, str], ...],
+        *,
+        context: str | None = None,
+    ) -> None:
+        """Best-effort cleanup with a finite timeout for each BLE operation."""
+        timeout = min(max(self._connection_timeout, 0.1), 10.0)
+        for label, obj, coro_name in resources:
             if obj is None:
                 continue
             try:
-                await getattr(obj, coro_name)()
+                async with asyncio.timeout(timeout):
+                    await getattr(obj, coro_name)()
+            except TimeoutError:
+                _LOGGER.warning(
+                    "%s.%s() timed out after %.1fs%s",
+                    label,
+                    coro_name,
+                    timeout,
+                    f" {context}" if context else "",
+                )
             except Exception:  # noqa: BLE001
-                _LOGGER.debug("%s.%s() failed", label, coro_name, exc_info=True)
-        if client is not None:
-            _LOGGER.info("AD1204U %s disconnected", self.address)
+                _LOGGER.debug(
+                    "%s.%s() failed%s",
+                    label,
+                    coro_name,
+                    f" {context}" if context else "",
+                    exc_info=True,
+                )
 
     # ------------------------------------------------------------ writes
     async def async_set_property(
@@ -293,10 +416,26 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         async with self._lock:
             try:
                 session = await self._ensure_connected()
+                client = self._client
+                generation = self._connection_generation
+                if client is None:
+                    raise UpdateFailed("BLE connection disappeared before set")
                 await set_property(session, siid, piid, value, u32=u32)
+                if (
+                    self._connection_generation != generation
+                    or self._session is not session
+                    or self._client is not client
+                    or not client.is_connected
+                ):
+                    raise UpdateFailed("BLE connection changed during set")
             except UpdateFailed:
                 await self._disconnect()
                 raise
+            except MiAuthInvalidTokenError as exc:
+                await self._disconnect()
+                raise ConfigEntryAuthFailed(
+                    "The charger rejected the configured BLE token"
+                ) from exc
             except BleakError as exc:
                 await self._disconnect()
                 raise UpdateFailed(f"BLE error on set: {exc}") from exc
@@ -319,8 +458,19 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         async with self._lock:
             try:
                 session = await self._ensure_connected()
+                client = self._client
+                generation = self._connection_generation
+                if client is None:
+                    raise UpdateFailed("BLE connection disappeared before refresh")
                 self._pending_notification_values.clear()
                 values = await get_properties(session)
+                if (
+                    self._connection_generation != generation
+                    or self._session is not session
+                    or self._client is not client
+                    or not client.is_connected
+                ):
+                    raise UpdateFailed("BLE connection changed during refresh")
                 values.update(self._pending_notification_values)
                 self._pending_notification_values.clear()
                 self._property_values = values
@@ -328,6 +478,11 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             except UpdateFailed:
                 await self._disconnect()
                 raise
+            except MiAuthInvalidTokenError as exc:
+                await self._disconnect()
+                raise ConfigEntryAuthFailed(
+                    "The charger rejected the configured BLE token"
+                ) from exc
             except BleakError as exc:
                 await self._disconnect()
                 raise UpdateFailed(f"BLE error: {exc}") from exc

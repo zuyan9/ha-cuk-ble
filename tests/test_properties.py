@@ -1,5 +1,6 @@
-import pytest
+import asyncio
 
+import pytest
 from cuktech_ble.xiaomi.properties import (
     MiotProtocolError,
     encode_get_properties,
@@ -7,6 +8,7 @@ from cuktech_ble.xiaomi.properties import (
     parse_notification,
     parse_response,
     parse_set_response,
+    set_property,
 )
 
 
@@ -51,6 +53,66 @@ def test_parse_set_response_rejects_other_opcodes() -> None:
 
     with pytest.raises(MiotProtocolError):
         parse_set_response(pt)
+
+    with pytest.raises(MiotProtocolError, match="bad set-response header"):
+        parse_set_response(bytes.fromhex("0b 20 0d 00 00 00"))
+
+    with pytest.raises(MiotProtocolError, match="trailing set-response"):
+        parse_set_response(
+            bytes.fromhex("0b 20 0d 00 01 01 02 0f 00 00 00 ff")
+        )
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    (
+        (bytes.fromhex("0b 20 0d 00 01 00"), "exactly one result, got 0"),
+        (
+            bytes.fromhex("0b 20 0d 00 01 01 02 06 00 00 00"),
+            "got result for siid=2, piid=0x6",
+        ),
+        (
+            bytes.fromhex("0b 20 0d 00 01 01 02 0f 00 01 00"),
+            "failed with status 0x0001",
+        ),
+        (
+            bytes.fromhex(
+                "0b 20 0d 00 01 02"
+                "02 0f 00 00 00"
+                "02 0f 00 00 00"
+            ),
+            "exactly one result, got 2",
+        ),
+    ),
+)
+def test_set_property_requires_one_matching_success(
+    response: bytes, message: str
+) -> None:
+    class FakeSession:
+        async def send_request(self, request: bytes) -> bytes:
+            assert request[:4] == bytes.fromhex("0c 20 0d 00")
+            return response
+
+    async def run() -> None:
+        with pytest.raises(MiotProtocolError, match=message):
+            await set_property(  # type: ignore[arg-type]
+                FakeSession(), 2, 0x0F, True, seq=0x000D
+            )
+
+    asyncio.run(run())
+
+
+def test_set_property_accepts_exact_matching_success() -> None:
+    class FakeSession:
+        async def send_request(self, request: bytes) -> bytes:
+            assert request[:4] == bytes.fromhex("0c 20 0d 00")
+            return bytes.fromhex("0b 20 0d 00 01 01 02 0f 00 00 00")
+
+    asyncio.run(
+        set_property(  # type: ignore[arg-type]
+            FakeSession(), 2, 0x0F, True, seq=0x000D
+        )
+    )
 
 
 def test_parse_response_accepts_0x0e_single_property_opcode() -> None:

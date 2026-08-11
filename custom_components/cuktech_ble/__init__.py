@@ -9,8 +9,9 @@ from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_BLUEZ_START_NOTIFY,
@@ -28,6 +29,7 @@ from .const import (
 )
 from .coordinator import AD1204UCoordinator
 from .lib.ports import PORTS
+from .lib.xiaomi.auth import MiAuthInvalidTokenError
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -36,6 +38,23 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 _LOGGER = logging.getLogger(__name__)
+
+UNSAFE_LEGACY_SWITCH_KEYS = (
+    "port_c1_power",
+    "port_c2_power",
+    "port_c3_power",
+    "port_a_power",
+    "c1_pd_protocol",
+    "c1_pps_protocol",
+    "c1_ufcs_protocol",
+    "c2_pd_protocol",
+    "c2_pps_protocol",
+    "c2_ufcs_protocol",
+    "c3_ufcs_protocol",
+    "c3_scp_protocol",
+    "a_ufcs_protocol",
+    "a_scp_protocol",
+)
 
 
 @dataclass
@@ -48,17 +67,23 @@ AD1204UConfigEntry = ConfigEntry[AD1204URuntimeData]  # type: ignore[valid-type]
 
 async def async_setup_entry(hass: HomeAssistant, entry: AD1204UConfigEntry) -> bool:
     address = entry.data[CONF_ADDRESS]
+    _remove_unsafe_legacy_entities(hass, entry, address)
     if not bluetooth.async_address_present(hass, address, connectable=True):
         raise ConfigEntryNotReady(f"{address} not currently visible over Bluetooth")
 
     try:
         token = bytes.fromhex(entry.data[CONF_TOKEN])
     except (KeyError, ValueError) as exc:
-        raise ConfigEntryNotReady(f"bad token in entry: {exc}") from exc
+        raise ConfigEntryAuthFailed("The saved BLE token is not valid hex") from exc
+    if len(token) != 12:
+        raise ConfigEntryAuthFailed(
+            "The saved BLE token must contain exactly 12 bytes"
+        )
 
     options = entry.options
     coordinator = AD1204UCoordinator(
         hass,
+        config_entry=entry,
         address=address,
         token=token,
         name=entry.data.get(CONF_LOCAL_NAME) or entry.title,
@@ -69,7 +94,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: AD1204UConfigEntry) -> b
         ),
         bluez_start_notify=bool(options.get(CONF_BLUEZ_START_NOTIFY, False)),
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady as exc:
+        if _is_invalid_token_failure(exc):
+            raise ConfigEntryAuthFailed(
+                "The charger rejected the configured BLE token"
+            ) from exc
+        raise
 
     entry.runtime_data = AD1204URuntimeData(coordinator=coordinator)
     _ensure_device_hierarchy(
@@ -78,6 +110,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: AD1204UConfigEntry) -> b
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+def _is_invalid_token_failure(error: BaseException) -> bool:
+    """Return whether an exception chain contains a confirmed token rejection."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, MiAuthInvalidTokenError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _remove_unsafe_legacy_entities(
+    hass: HomeAssistant,
+    entry: AD1204UConfigEntry,
+    address: str,
+) -> None:
+    """Remove writable entities whose protocol mappings were never verified."""
+    registry = er.async_get(hass)
+    for key in UNSAFE_LEGACY_SWITCH_KEYS:
+        entity_id = registry.async_get_entity_id(
+            Platform.SWITCH,
+            DOMAIN,
+            f"{address}_{key}",
+        )
+        if entity_id is None:
+            continue
+        legacy_entity = registry.async_get(entity_id)
+        if legacy_entity is not None and legacy_entity.config_entry_id == entry.entry_id:
+            registry.async_remove(entity_id)
 
 
 def _ensure_device_hierarchy(

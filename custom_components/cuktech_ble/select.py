@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import AD1204UConfigEntry
 from .coordinator import AD1204UCoordinator
@@ -17,11 +17,18 @@ SCENE_MODE_PIID = 0x0005
 SCENE_MODE_BY_VALUE: dict[int, str] = {1: "ai_mode", 2: "hybrid", 3: "single", 4: "dual"}
 SCENE_MODE_BY_KEY: dict[str, int] = {v: k for k, v in SCENE_MODE_BY_VALUE.items()}
 
-# screen_save_time enum reversed from Mi Home tablet capture 2026-04-26:
-# 1 = 1 Min, 5 = 5 Min, 10 = 10 Min, 30 = 30 Min, 0 = Always-On.
+# screen_save_time is an enum code, not a minute count. The official v1/v2
+# MIOT specs define 4=1 Min, 0=5 Min, 1=10 Min, 2=30 Min, and 3=OFF
+# (screen timeout disabled / always on). A Mi Home capture confirms 4=1 Min.
 SCREEN_SAVE_TIME_SIID = 2
 SCREEN_SAVE_TIME_PIID = 0x0006
-SCREEN_SAVE_TIME_BY_VALUE: dict[int, str] = {1: "1_min", 5: "5_min", 10: "10_min", 30: "30_min", 0: "always_on"}
+SCREEN_SAVE_TIME_BY_VALUE: dict[int, str] = {
+    4: "1_min",
+    0: "5_min",
+    1: "10_min",
+    2: "30_min",
+    3: "always_on",
+}
 SCREEN_SAVE_TIME_BY_KEY: dict[str, int] = {v: k for k, v in SCREEN_SAVE_TIME_BY_VALUE.items()}
 
 # device_language enum reversed from Mi Home tablet capture:
@@ -35,14 +42,16 @@ DEVICE_LANGUAGE_BY_KEY: dict[str, int] = {v: k for k, v in DEVICE_LANGUAGE_BY_VA
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: AD1204UConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data.coordinator
-    async_add_entities([
-        AD1204USceneModeSelect(coordinator),
-        AD1204UScreenSaveTimeSelect(coordinator),
-        AD1204UDeviceLanguageSelect(coordinator),
-    ])
+    async_add_entities(
+        [
+            AD1204USceneModeSelect(coordinator),
+            AD1204UScreenSaveTimeSelect(coordinator),
+            AD1204UDeviceLanguageSelect(coordinator),
+        ]
+    )
 
 
 class AD1204USceneModeSelect(AD1204UEntity, SelectEntity):
@@ -70,6 +79,7 @@ class AD1204USceneModeSelect(AD1204UEntity, SelectEntity):
             SCENE_MODE_SIID, SCENE_MODE_PIID, value
         )
 
+
 class AD1204UScreenSaveTimeSelect(AD1204UEntity, SelectEntity):
     _attr_translation_key = "screen_save_time"
     _attr_options = list(SCREEN_SAVE_TIME_BY_VALUE.values())
@@ -94,6 +104,7 @@ class AD1204UScreenSaveTimeSelect(AD1204UEntity, SelectEntity):
         await self.coordinator.async_set_property(
             SCREEN_SAVE_TIME_SIID, SCREEN_SAVE_TIME_PIID, value
         )
+
 
 class AD1204UDeviceLanguageSelect(AD1204UEntity, SelectEntity):
     _attr_translation_key = "device_language"

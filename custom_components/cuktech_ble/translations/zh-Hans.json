@@ -4,14 +4,16 @@
             "already_configured": "This CUKTECH AD1204U is already configured.",
             "no_devices_found": "No CUKTECH AD1204U chargers were found.",
             "not_supported": "This Bluetooth device is not a CUKTECH AD1204U.",
-            "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login."
+            "reauth_successful": "重新认证成功。"
         },
         "error": {
             "token_not_hex": "Token must be a hex string.",
             "token_wrong_length": "Token must decode to 12 bytes (24 hex characters).",
             "cloud_qr_failed": "QR login failed or timed out. Please try again.",
+            "cloud_qr_start_failed": "Could not reach the Xiaomi cloud to start QR login.",
             "cloud_qr_cancelled": "QR login was cancelled.",
             "cloud_fetch_failed": "Could not fetch the device list from the Xiaomi cloud.",
+            "cloud_fetch_cancelled": "Fetching the Xiaomi device list was cancelled.",
             "cloud_device_not_found": "This charger was not found in the selected Xiaomi region. Try a different region.",
             "cloud_unknown": "Unknown cloud error."
         },
@@ -56,6 +58,13 @@
                 "description": "Paste the 24-character (12-byte) hex token for this device. You can fetch it from your Xiaomi account using the tools/ad1204u_fetch_token.py script shipped with this integration.",
                 "data": {
                     "token": "BLE token (hex)"
+                }
+            },
+            "reauth_confirm": {
+                "title": "更新 {name} 的蓝牙 Token",
+                "description": "充电器拒绝了已保存的蓝牙 Token。请输入新的 24 位（12 字节）十六进制 Token。",
+                "data": {
+                    "token": "新的蓝牙 Token（十六进制）"
                 }
             }
         }
@@ -118,48 +127,6 @@
             },
             "screen_dir_lock": {
                 "name": "锁定屏幕方向"
-            },
-            "port_c1_power": {
-                "name": "C1电源"
-            },
-            "port_c2_power": {
-                "name": "C2电源"
-            },
-            "port_c3_power": {
-                "name": "C3电源"
-            },
-            "port_a_power": {
-                "name": "USB-A电源"
-            },
-            "c1_pd_protocol": {
-                "name": "PD协议"
-            },
-            "c1_pps_protocol": {
-                "name": "PPS协议"
-            },
-            "c1_ufcs_protocol": {
-                "name": "UFCS协议"
-            },
-            "c2_pd_protocol": {
-                "name": "PD协议"
-            },
-            "c2_pps_protocol": {
-                "name": "PPS协议"
-            },
-            "c2_ufcs_protocol": {
-                "name": "UFCS协议"
-            },
-            "c3_ufcs_protocol": {
-                "name": "UFCS协议"
-            },
-            "c3_scp_protocol": {
-                "name": "SCP协议"
-            },
-            "a_ufcs_protocol": {
-                "name": "UFCS协议"
-            },
-            "a_scp_protocol": {
-                "name": "SCP协议"
             }
         },
         "select": {

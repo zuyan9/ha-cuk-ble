@@ -34,14 +34,14 @@ file is the shareable summary.
   entering the submenu, or by manual touch while capturing.
 - [ ] **`port_ctl`** (u8 bitmap, piid `0x10`). Mi Home exposes a per-port
   power button; capture one toggle.
-- [ ] **piid `0x0e`** — Mi Home writes `val=2` on every reconnect. Read
-  its current value, try writing different values, see what moves in the
-  device state.
+- [ ] **piid `0x0e` (`enter`)** — the current capture contains no writes.
+  Determine when the app uses it before attempting any controlled values.
 
 ## Integration polish (after protocol masks land)
 
 - [ ] Switches for per-port UFCS/PD/PPS enable.
-- [x] Switches for the `port_ctl` port-enable bitmap.
+- [ ] Switches for the `port_ctl` port-enable bitmap, after a deliberate Mi
+  Home toggle capture confirms its writable bit mapping.
 - [x] Select entity for `screen_save_time` (u8, piid `0x06`)
 
 ## Housekeeping

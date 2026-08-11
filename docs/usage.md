@@ -6,6 +6,9 @@ Easiest: use the **Mi Cloud (QR)** option in the config flow. It's a one-shot
 fetch — no password, no stored credentials, and the integration never talks
 to Mi Cloud again after setup.
 
+If the charger later rejects a saved token, Home Assistant starts a
+re-authentication flow so you can replace it without deleting the device.
+
 If you'd rather grab the token outside Home Assistant:
 
 ```bash

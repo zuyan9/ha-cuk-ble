@@ -31,7 +31,7 @@ Response:
 | 0x03 | port C3 info | u32 | per-port power word |
 | 0x04 | port A info  | u32 | per-port power word |
 | 0x05 | scene_mode | u8 | |
-| 0x06 | screen_save_time | u8 | |
+| 0x06 | screen_save_time | u8 | enum: `4`=1 min, `0`=5 min, `1`=10 min, `2`=30 min, `3`=always on |
 | 0x07 | protocol_ctl | u8 | |
 | 0x0d | device_language | u8 | |
 | 0x0f | usb_a_always_on | bool | |
@@ -163,8 +163,12 @@ Observed on the C3/A shared rail (voltage-band driven, see earlier notes):
   the "100 W" SINK240 case landed on plain 20 V/5 A SPR rather than PD 3.1.
 - **`protocol_ctl_extend`** (u32 `0x03030f0f` constant so far) and
   **`port_ctl`** bitmap (`0x0f` constant) — not varied by Mi Home during
-  our captures. Their writable semantics are still unknown.
-- **piid `0x0e`** — Mi Home writes val=2 on every reconnect. Purpose
-  unknown; the integration doesn't touch it.
+  our captures. The long 2026-04-14 app session read both six times but wrote
+  neither, so their writable semantics remain unknown and the integration does
+  not expose controls for them.
+- **piid `0x0e` (`enter`)** — purpose remains unknown. The long Mi Home
+  session did not write it, and normal `2.6` and `2.19` setting writes completed
+  without a following `2.14` write. The integration therefore does not treat it
+  as a generic settings-sync command.
 - **Temperature telemetry** — the charger has internal NTC monitoring, but no
   BLE MIOT property or Mi Home plugin field currently exposes it.

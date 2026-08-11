@@ -6,19 +6,21 @@ write/notify ATT handles.
 
 Usage:
     .venv/bin/python tools/decrypt_btsnoop_miot.py /tmp/btsnoop.log \
-        --mac 3C:CD:73:2B:1B:88 --token 00112233445566778899aabb
+        --mac 3C:CD:73:2B:1B:88 --token-file ~/.cuktech_ble.token
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+from itertools import chain
 import json
 import struct
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 
@@ -29,6 +31,14 @@ from cuktech_ble.xiaomi.session import mible_v1_nonce
 DEFAULT_AUTH_HANDLE = 0x0010
 DEFAULT_MIOT_WRITE_HANDLE = 0x0019
 DEFAULT_MIOT_NOTIFY_HANDLE = 0x001C
+
+# Keep the capture decoder comfortably below the constrained-device RAM budget.
+# 65,536 normal GATT values are at most about 32 MiB; the byte cap also covers
+# malformed captures containing oversized values. Split longer captures.
+MAX_SESSION_ATT_FRAMES = 65_536
+MAX_SESSION_ATT_BYTES = 64 * 1024 * 1024
+MAX_DECODED_ROWS = 100_000
+MAX_BTSNOOP_RECORD_BYTES = 1024 * 1024
 
 CSV_FIELDS = (
     "ts_ms",
@@ -100,6 +110,11 @@ def iter_btsnoop(path: Path) -> Iterator[BtsnoopRecord]:
             if len(hdr) < 24:
                 return
             _, incl_len, flags, _, ts_hi, ts_lo = struct.unpack(">IIIIII", hdr)
+            if incl_len > MAX_BTSNOOP_RECORD_BYTES:
+                raise ValueError(
+                    f"btsnoop record length {incl_len} exceeds "
+                    f"{MAX_BTSNOOP_RECORD_BYTES} bytes"
+                )
             data = f.read(incl_len)
             if len(data) < incl_len:
                 return
@@ -144,13 +159,12 @@ def find_connection_handles(path: Path, mac: str) -> set[int]:
     return handles
 
 
-def extract_att_frames(path: Path, mac: str) -> list[AttFrame]:
-    """Return write/notify ATT value frames for connections to ``mac``."""
+def iter_att_frames(path: Path, mac: str) -> Iterator[AttFrame]:
+    """Yield write/notify ATT value frames for connections to ``mac``."""
     handles = find_connection_handles(path, mac)
     if not handles:
-        return []
+        return
 
-    frames: list[AttFrame] = []
     l2cap_buffers: dict[int, tuple[int, bytes, int]] = {}
     start_ts: int | None = None
 
@@ -173,8 +187,7 @@ def extract_att_frames(path: Path, mac: str) -> list[AttFrame]:
             l2_len, cid = struct.unpack("<HH", data[:4])
             fragment = data[4:]
             if len(fragment) >= l2_len:
-                _append_att_frame(
-                    frames,
+                frame = _parse_att_frame(
                     rec.ts_us,
                     start_ts,
                     direction,
@@ -182,14 +195,15 @@ def extract_att_frames(path: Path, mac: str) -> list[AttFrame]:
                     cid,
                     fragment[:l2_len],
                 )
+                if frame is not None:
+                    yield frame
             else:
                 l2cap_buffers[acl_handle] = (cid, fragment, l2_len)
         elif pb_flag == 1 and acl_handle in l2cap_buffers:
             cid, partial, l2_len = l2cap_buffers[acl_handle]
             partial += data
             if len(partial) >= l2_len:
-                _append_att_frame(
-                    frames,
+                frame = _parse_att_frame(
                     rec.ts_us,
                     start_ts,
                     direction,
@@ -198,35 +212,37 @@ def extract_att_frames(path: Path, mac: str) -> list[AttFrame]:
                     partial[:l2_len],
                 )
                 del l2cap_buffers[acl_handle]
+                if frame is not None:
+                    yield frame
             else:
                 l2cap_buffers[acl_handle] = (cid, partial, l2_len)
 
-    return frames
+
+def extract_att_frames(path: Path, mac: str) -> list[AttFrame]:
+    """Return write/notify ATT value frames for connections to ``mac``."""
+    return list(iter_att_frames(path, mac))
 
 
-def _append_att_frame(
-    frames: list[AttFrame],
+def _parse_att_frame(
     ts_us: int,
     start_ts: int,
     direction: str,
     acl_handle: int,
     cid: int,
     pdu: bytes,
-) -> None:
+) -> AttFrame | None:
     if cid != 0x0004 or len(pdu) < 3:
-        return
+        return None
     opcode = pdu[0]
     if opcode not in (0x12, 0x1B, 0x1D, 0x52):
-        return
+        return None
     attr_handle = pdu[1] | (pdu[2] << 8)
-    frames.append(
-        AttFrame(
-            ts_ms=(ts_us - start_ts) / 1000.0,
-            direction=direction,
-            acl_handle=acl_handle,
-            attr_handle=attr_handle,
-            value=bytes(pdu[3:]),
-        )
+    return AttFrame(
+        ts_ms=(ts_us - start_ts) / 1000.0,
+        direction=direction,
+        acl_handle=acl_handle,
+        attr_handle=attr_handle,
+        value=bytes(pdu[3:]),
     )
 
 
@@ -295,6 +311,57 @@ def extract_login_randoms(
             f"login randoms must be 16 bytes, got app={len(app_rand)} dev={len(dev_rand)}"
         )
     return LoginRandoms(app_rand=app_rand, dev_rand=dev_rand)
+
+
+def iter_login_sessions(
+    frames: Iterable[AttFrame],
+    *,
+    auth_handle: int = DEFAULT_AUTH_HANDLE,
+    max_frames: int = MAX_SESSION_ATT_FRAMES,
+    max_bytes: int = MAX_SESSION_ATT_BYTES,
+) -> Iterator[list[AttFrame]]:
+    """Yield capped ATT frame buffers for each observed login epoch."""
+    active: list[AttFrame] = []
+    active_handle: int | None = None
+    active_bytes = 0
+
+    if max_frames < 1 or max_bytes < 1:
+        raise ValueError("login session limits must be positive")
+
+    for frame in frames:
+        is_login_start = (
+            frame.attr_handle == auth_handle
+            and frame.direction == "tx"
+            and frame.value.startswith(b"\x00\x00\x00\x0b")
+            and len(frame.value) >= 6
+        )
+        if is_login_start:
+            if active:
+                yield active
+            if len(frame.value) > max_bytes:
+                raise ValueError(
+                    f"login session exceeds {max_bytes} ATT value bytes; "
+                    "split the capture into shorter intervals"
+                )
+            active = [frame]
+            active_handle = frame.acl_handle
+            active_bytes = len(frame.value)
+        elif active and frame.acl_handle == active_handle:
+            if len(active) >= max_frames:
+                raise ValueError(
+                    f"login session exceeds {max_frames} ATT frames; "
+                    "split the capture into shorter intervals"
+                )
+            if active_bytes + len(frame.value) > max_bytes:
+                raise ValueError(
+                    f"login session exceeds {max_bytes} ATT value bytes; "
+                    "split the capture into shorter intervals"
+                )
+            active.append(frame)
+            active_bytes += len(frame.value)
+
+    if active:
+        yield active
 
 
 def extract_miot_frames(
@@ -554,26 +621,88 @@ def decrypt_log(
     write_handle: int = DEFAULT_MIOT_WRITE_HANDLE,
     notify_handle: int = DEFAULT_MIOT_NOTIFY_HANDLE,
 ) -> list[dict[str, Any]]:
-    att_frames = extract_att_frames(path, mac)
-    if not att_frames:
+    att_frames = iter(iter_att_frames(path, mac))
+    first_frame = next(att_frames, None)
+    if first_frame is None:
         raise ValueError(f"no ATT frames found for {mac}")
-    randoms = extract_login_randoms(att_frames, auth_handle=auth_handle)
-    miot_frames = extract_miot_frames(
-        att_frames,
+    return decrypt_att_frames(
+        chain((first_frame,), att_frames),
+        token=token,
+        auth_handle=auth_handle,
         write_handle=write_handle,
         notify_handle=notify_handle,
     )
+
+
+def decrypt_att_frames(
+    att_frames: Iterable[AttFrame],
+    *,
+    token: bytes,
+    auth_handle: int = DEFAULT_AUTH_HANDLE,
+    write_handle: int = DEFAULT_MIOT_WRITE_HANDLE,
+    notify_handle: int = DEFAULT_MIOT_NOTIFY_HANDLE,
+) -> list[dict[str, Any]]:
+    """Decrypt all complete login epochs from an ATT frame stream."""
     rows: list[dict[str, Any]] = []
-    failures = 0
-    for frame in miot_frames:
+    session_count = 0
+    complete_session_count = 0
+    failed_sessions: list[str] = []
+
+    sessions = iter_login_sessions(att_frames, auth_handle=auth_handle)
+    for session_count, session_frames in enumerate(sessions, start=1):
         try:
-            plaintext = decrypt_miot_frame(frame, token, randoms)
-        except Exception:
-            failures += 1
+            randoms = extract_login_randoms(
+                session_frames,
+                auth_handle=auth_handle,
+            )
+        except ValueError:
+            # A capture can end during login. Do not let an incomplete epoch
+            # prevent earlier complete sessions from being decoded.
+            del session_frames
             continue
-        rows.extend(decode_miot_plaintext(frame, plaintext))
-    if not rows and failures:
-        raise ValueError(f"{failures} MIOT frames found, but none decrypted")
+
+        complete_session_count += 1
+        miot_frames = extract_miot_frames(
+            session_frames,
+            write_handle=write_handle,
+            notify_handle=notify_handle,
+        )
+        session_rows: list[dict[str, Any]] = []
+        decrypted_frame_count = 0
+        for frame in miot_frames:
+            try:
+                plaintext = decrypt_miot_frame(frame, token, randoms)
+            except Exception:
+                continue
+            decrypted_frame_count += 1
+            decoded_rows = decode_miot_plaintext(frame, plaintext)
+            if len(rows) + len(session_rows) + len(decoded_rows) > MAX_DECODED_ROWS:
+                raise ValueError(
+                    f"decoded output exceeds {MAX_DECODED_ROWS} rows; "
+                    "split the capture into shorter intervals"
+                )
+            session_rows.extend(decoded_rows)
+
+        if miot_frames and decrypted_frame_count == 0:
+            failed_sessions.append(
+                f"session {session_count} (ACL handle {session_frames[0].acl_handle})"
+            )
+        else:
+            rows.extend(session_rows)
+        del session_frames
+
+    if session_count == 0:
+        raise ValueError("could not find a login session on the auth channel")
+    if complete_session_count == 0:
+        raise ValueError("could not find a complete login session on the auth channel")
+    if failed_sessions:
+        details = ", ".join(failed_sessions)
+        message = f"MIOT frames found, but none decrypted in {details}"
+        if not rows:
+            raise ValueError(message)
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+    rows.sort(key=lambda row: float(row["ts_ms"]))
     return rows
 
 

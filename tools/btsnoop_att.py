@@ -90,7 +90,6 @@ def find_connection_handles_for_mac(
 ) -> dict[int, tuple[int, int]]:
     """Return {acl_handle: (start_ts_us, end_ts_us_or_0)} for connections to MAC."""
     handles: dict[int, tuple[int, int]] = {}
-    pending_create = False
     for rec in iter_records(path):
         # HCI Event, look for LE Meta / Connection Complete
         if rec.packet_type == 4 and len(rec.payload) >= 2:
