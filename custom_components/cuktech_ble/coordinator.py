@@ -1,16 +1,17 @@
 """DataUpdateCoordinator for the CUKTECH AD1204U charger.
 
-Strategy: persistent BLE connection with configurable "release on idle".
+Strategy: persistent BLE connection with a configurable idle lease.
 
 - On first refresh, connect + Mi standard-auth login + subscribe to MIOT channels.
 - Poll siid=2 properties every ``update_interval`` seconds over the live session.
-- If nothing consumes data for ``idle_release`` seconds, drop the connection so
-  Mi Home (or another client) can talk to the charger. Reconnect on demand.
+- Release the connection ``idle_release`` seconds after login or the last explicit
+  property write. Scheduled polls do not extend the lease; the next poll reconnects.
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -90,8 +91,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._session: MiSession | None = None
         self.firmware_version: str | None = None
         self._lock = asyncio.Lock()
-        self._last_success_ts: float = 0.0
-        self._idle_task: asyncio.Task | None = None
+        self._idle_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------ lifecycle
     def _on_disconnect(self, client: BleakClient) -> None:
@@ -109,13 +109,28 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         )
 
     async def async_shutdown(self) -> None:
-        if self._idle_task is not None:
-            self._idle_task.cancel()
+        """Stop refreshes and release all BLE resources."""
+        await super().async_shutdown()
+
+        # Waiting for the lock lets an in-flight poll, write, or idle disconnect
+        # finish before cleanup. Cancel the timer only after owning the lock so
+        # cancellation cannot interrupt it halfway through _disconnect().
+        async with self._lock:
+            idle_task = self._idle_task
             self._idle_task = None
-        await self._disconnect()
+            if idle_task is not None and idle_task is not asyncio.current_task():
+                idle_task.cancel()
+            await self._disconnect()
+
+        if idle_task is not None and idle_task is not asyncio.current_task():
+            with suppress(asyncio.CancelledError):
+                await idle_task
 
     # ---------------------------------------------------------- connection
     async def _ensure_connected(self) -> MiSession:
+        if self._shutdown_requested:
+            raise UpdateFailed("Coordinator is shutting down")
+
         if self._session is not None and self._client is not None and self._client.is_connected:
             return self._session
 
@@ -173,6 +188,7 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
         self._client = client
         self._auth = auth
         self._session = session
+        self._arm_idle_release(client)
         _LOGGER.info("AD1204U %s connected + logged in", self.address)
         return session
 
@@ -222,13 +238,20 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             try:
                 session = await self._ensure_connected()
                 await set_property(session, siid, piid, value, u32=u32)
+            except UpdateFailed:
+                await self._disconnect()
+                raise
             except BleakError as exc:
                 await self._disconnect()
                 raise UpdateFailed(f"BLE error on set: {exc}") from exc
             except Exception as exc:
                 await self._disconnect()
                 raise UpdateFailed(f"set_property failed: {exc}") from exc
-            self._last_success_ts = asyncio.get_event_loop().time()
+            if self._client is not None:
+                # Explicit user activity extends the lease. Scheduled polling
+                # deliberately does not, otherwise a short poll interval keeps
+                # the one-peer BLE connection forever.
+                self._arm_idle_release(self._client)
         # Use async_refresh (immediate) rather than async_request_refresh
         # (debounced) so entity state mirrors the write before the service
         # call returns to the HA client.
@@ -241,6 +264,9 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
             try:
                 session = await self._ensure_connected()
                 values = await get_properties(session)
+            except UpdateFailed:
+                await self._disconnect()
+                raise
             except BleakError as exc:
                 await self._disconnect()
                 raise UpdateFailed(f"BLE error: {exc}") from exc
@@ -248,36 +274,35 @@ class AD1204UCoordinator(DataUpdateCoordinator[AD1204UData]):
                 await self._disconnect()
                 raise UpdateFailed(f"{type(exc).__name__}: {exc}") from exc
 
-        self._last_success_ts = asyncio.get_event_loop().time()
-        self._schedule_idle_release()
         return _build_snapshot(values)
 
-    def _schedule_idle_release(self) -> None:
+    def _arm_idle_release(self, client: BleakClient) -> None:
+        """Start a one-shot release timer for the current BLE connection."""
+        if self._idle_task is not None and not self._idle_task.done():
+            self._idle_task.cancel()
+        self._idle_task = None
         if self._idle_release <= 0:
             return
-        if self._idle_task is not None and not self._idle_task.done():
-            return
         self._idle_task = self.hass.async_create_background_task(
-            self._idle_release_loop(), name=f"ad1204u_idle_{self.address}"
+            self._idle_release_after(client), name=f"ad1204u_idle_{self.address}"
         )
 
-    async def _idle_release_loop(self) -> None:
+    async def _idle_release_after(self, client: BleakClient) -> None:
+        """Release one specific BLE connection after its idle lease expires."""
         try:
-            while True:
-                await asyncio.sleep(self._idle_release)
-                now = asyncio.get_event_loop().time()
-                if now - self._last_success_ts >= self._idle_release:
-                    # No successful poll recently — release the connection.
-                    # Next update tick will re-establish it.
-                    async with self._lock:
-                        if self._client is not None and self._client.is_connected:
-                            _LOGGER.debug(
-                                "idle release after %.1fs", now - self._last_success_ts
-                            )
-                            await self._disconnect()
-                    return
-        except asyncio.CancelledError:
-            return
+            await asyncio.sleep(self._idle_release)
+            async with self._lock:
+                # A reconnect can replace the client while an older timer is
+                # sleeping. Never let that stale timer drop the new session.
+                if self._client is client:
+                    _LOGGER.debug(
+                        "releasing BLE connection after %.1fs idle lease",
+                        self._idle_release,
+                    )
+                    await self._disconnect()
+        finally:
+            if self._idle_task is asyncio.current_task():
+                self._idle_task = None
 
 
 def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
@@ -323,4 +348,3 @@ def _build_snapshot(values: dict[tuple[int, int], Any]) -> AD1204UData:
         screenoff_while_idle=_bool(0x13),
         screen_dir_lock=_bool(0x14),
     )
-

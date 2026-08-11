@@ -45,7 +45,7 @@ Charger-level controls (on the parent device):
 | Option | Default | Range | Meaning |
 |---|---|---|---|
 | Polling interval | 30 s | 5–3600 | BLE read cadence |
-| Idle release | 300 s | 0–3600 | Disconnect after this long with no poll (`0` = stay connected) |
+| Idle release | 300 s | 0–3600 | Release the BLE session this long after login or the last write; scheduled polls do not extend it (`0` = stay connected) |
 | Connection timeout | 15 s | 5–120 | How long to wait for a BLE connect |
 | BlueZ `start-notify` hint | off | — | Linux-only workaround for CCCD flakiness |
 
