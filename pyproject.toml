@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+    "aiohttp>=3.11",
     "pytest>=8",
     "ruff>=0.12,<1",
 ]
