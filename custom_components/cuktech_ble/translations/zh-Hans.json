@@ -195,8 +195,8 @@
         "step": {
             "init": {
                 "data": {
-                    "update_period": "Polling interval (seconds)",
-                    "idle_release": "Release BLE connection after idle (seconds, 0 = keep connected)",
+                    "update_period": "完整状态刷新间隔（秒）",
+                    "idle_release": "Release BLE connection after login or last write (seconds, 0 = keep connected)",
                     "connection_timeout": "Connection timeout (seconds)",
                     "bluez_start_notify": "Use BlueZ start-notify hint (Linux)"
                 }

@@ -65,10 +65,22 @@ class RegisterResult:
 @dataclass
 class _ChannelQueue:
     uuid: str
-    queue: asyncio.Queue[bytes] = field(default_factory=asyncio.Queue)
+    maxsize: int = 64
+    queue: asyncio.Queue[bytes] = field(init=False)
+    dropped: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self.queue = asyncio.Queue(maxsize=self.maxsize)
 
     def handler(self) -> Callable[[Any, bytearray], None]:
         def _on(_: Any, data: bytearray) -> None:
+            if self.queue.full():
+                # Notification callbacks cannot apply backpressure. Keep memory
+                # bounded and flag the transport as unusable so its consumer
+                # reconnects instead of silently continuing with missing
+                # protocol frames.
+                self.queue.get_nowait()
+                self.dropped += 1
             self.queue.put_nowait(bytes(data))
         return _on
 
@@ -150,6 +162,11 @@ class MiAuthClient:
 
     # ------------------------------------------------------------------ IO
     async def _recv(self, channel: _ChannelQueue) -> bytes:
+        if channel.dropped:
+            raise MiAuthError(
+                f"notification queue overflow on {channel.uuid} "
+                f"({channel.dropped} frame(s) dropped)"
+            )
         try:
             data = await asyncio.wait_for(channel.queue.get(), self._timeout)
         except asyncio.TimeoutError as exc:

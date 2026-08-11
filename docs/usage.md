@@ -44,8 +44,8 @@ Charger-level controls (on the parent device):
 
 | Option | Default | Range | Meaning |
 |---|---|---|---|
-| Polling interval | 30 s | 5–3600 | BLE read cadence |
-| Idle release | 300 s | 0–3600 | Disconnect after this long with no poll (`0` = stay connected) |
+| Reconciliation interval | 30 s | 5–3600 | Full BLE read when live property pushes are quiet |
+| Idle release | 300 s | 0–3600 | Release the BLE session this long after login or the last write; scheduled polls do not extend it (`0` = stay connected) |
 | Connection timeout | 15 s | 5–120 | How long to wait for a BLE connect |
 | BlueZ `start-notify` hint | off | — | Linux-only workaround for CCCD flakiness |
 
@@ -54,6 +54,10 @@ Charger-level controls (on the parent device):
 - **Writable controls:** USB-A always on, screen-off when idle, lock screen
   orientation, scene mode. More will be added as we reverse additional
   settings (per-port protocol masks are still pending).
+- **Live updates:** while connected, the charger pushes changed port and
+  setting values. The integration ACKs and coalesces them immediately; the
+  interval above is a fallback full-state reconciliation, not the primary
+  telemetry path.
 - **One BLE peer at a time.** The charger only accepts a single Bluetooth
   client. While Mi Home is open and connected on a phone or tablet, HA
   can't reach the charger and entities will go *unavailable*. Same the
