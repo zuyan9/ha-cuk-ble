@@ -47,6 +47,11 @@ AES-CCM with:
 - **tag** = 4 bytes
 - **counter** = independent 16-bit LE per direction, embedded in the transport frame
 
+Immediately after login, Mi Home enters the application session with
+`05 20 <seq_le> f0`; the charger echoes the same plaintext. This happens once
+per connection before property reads. The integration performs the same
+initialization before accepting requests or pushes.
+
 ### Outbound (host → device on UUID `0x001a`)
 
 ```
@@ -89,10 +94,24 @@ parcels 2+ strip 2.
 
 ### Interleaved telemetry
 
-After login the device may spontaneously push a counter=0/1 telemetry frame
-*before* the response you asked for. `MiSession.send_request` reads up to
-8 frames, skips anything that doesn't decrypt or doesn't match the request seq
-in `pt[2:4]`, and returns the matching response.
+After login the device sends spontaneous property changes alongside request
+responses. A retained 394-second Mi Home session received 264 port updates
+(median spacing 1.20 seconds) and performed no steady polling after its initial
+and UI-triggered reads. Every inline frame was ACKed promptly: median 16 ms,
+maximum 43 ms.
+
+`MiSession` therefore runs one bounded receive worker. It ACKs before decrypting,
+routes responses by both sequence and expected opcode, and forwards `0f20`
+telemetry plus `0c20` flag-`04` setting echoes to the coordinator. This avoids
+the old failure mode where pushes waited in an unbounded queue until a poll and
+eight queued events could exhaust the response-search budget. Raw diagnostic
+history retains only the newest 16 frames, and malformed parcel counts are
+rejected before allocation.
+
+Mi Home's Android transport also wrote every encrypted outbound data parcel
+twice, 4.5–15 ms apart, while sending each announcement once. Single parcel
+writes are reliable in live integration tests, so this duplication is recorded
+as a vendor behavior rather than copied without an A/B failure test.
 
 ### Offline btsnoop decode
 

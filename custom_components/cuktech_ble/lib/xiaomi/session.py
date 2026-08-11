@@ -23,8 +23,10 @@ Key is ``app_key`` for host→device and ``dev_key`` for device→host.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
+from contextlib import suppress
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
@@ -48,9 +50,18 @@ MIOT_NOTIFY_UUID = "0000001b-0000-1000-8000-00805f9b34fb"
 
 # MIOT request/response announcement code (byte[3] of the 6-byte header).
 MIOT_ANN_CODE = 0x00
+MAX_CAPTURED_FRAMES = 16
+MAX_MIOT_PARCELS = 64
+EXPECTED_RESPONSE_OPCODES: dict[bytes, frozenset[bytes]] = {
+    b"\x05\x20": frozenset((b"\x05\x20",)),
+    b"\x0c\x20": frozenset((b"\x0b\x20",)),
+    b"\x24\x20": frozenset((b"\x66\x20",)),
+    b"\x33\x20": frozenset((b"\x0e\x20", b"\x1c\x20", b"\x93\x20")),
+}
 
 
 NonceBuilder = Callable[[bytes, int], bytes]
+NotificationCallback = Callable[[bytes], None]
 
 
 def mible_v1_nonce(iv: bytes, counter: int) -> bytes:
@@ -108,22 +119,34 @@ class MiSession:
         *,
         profile: MiotCipherProfile = DEFAULT_PROFILE,
         timeout: float = 10.0,
+        notification_callback: NotificationCallback | None = None,
     ) -> None:
         self._auth = auth
         self._keys = keys
         self._profile = profile
         self._timeout = timeout
-        self._response = _ChannelQueue(MIOT_NOTIFY_UUID)
+        self._response = _ChannelQueue(MIOT_NOTIFY_UUID, maxsize=64)
         # RCV_RDY/RCV_OK for MIOT come on UUID 0x001a (same char we write
         # requests to), distinct from AVDTP used during auth.
-        self._control = _ChannelQueue(MIOT_WRITE_UUID)
+        self._control = _ChannelQueue(MIOT_WRITE_UUID, maxsize=16)
         self._response_sub = False
         self._control_sub = False
         self._tx_counter = 0
         self._rx_counter = 0
+        self._notification_callback = notification_callback
+        self._request_lock = asyncio.Lock()
+        self._pending_seq: bytes | None = None
+        self._pending_opcodes: frozenset[bytes] = frozenset()
+        self._pending_response: asyncio.Future[bytes] | None = None
+        self._request_task: asyncio.Task[Any] | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._reader_error: Exception | None = None
+        self._closing = False
+        self._deferred_frames: deque[MiotFrame] = deque(maxlen=MAX_CAPTURED_FRAMES)
+        self._request_seq = 2
         self._app_ccm = AESCCM(keys.app_key, tag_length=profile.tag_length)
         self._dev_ccm = AESCCM(keys.dev_key, tag_length=profile.tag_length)
-        self._rx_raw: list[MiotFrame] = []
+        self._rx_raw: deque[MiotFrame] = deque(maxlen=MAX_CAPTURED_FRAMES)
 
     @property
     def profile(self) -> MiotCipherProfile:
@@ -141,6 +164,7 @@ class MiSession:
         await self.unsubscribe()
 
     async def subscribe(self) -> None:
+        self._closing = False
         if not self._response_sub:
             await self._auth._client.start_notify(
                 MIOT_NOTIFY_UUID,
@@ -155,8 +179,18 @@ class MiSession:
                 **self._auth._start_kwargs,
             )
             self._control_sub = True
+        if self._reader_task is None:
+            self._reader_error = None
+            self._reader_task = asyncio.create_task(
+                self._reader_loop(), name="ad1204u_miot_reader"
+            )
 
     async def unsubscribe(self) -> None:
+        self._closing = True
+        request_task = self._request_task
+        if request_task is not None and request_task is not asyncio.current_task():
+            request_task.cancel()
+
         for uuid, flag_attr in (
             (MIOT_NOTIFY_UUID, "_response_sub"),
             (MIOT_WRITE_UUID, "_control_sub"),
@@ -168,8 +202,27 @@ class MiSession:
                 except Exception:  # noqa: BLE001
                     LOGGER.debug("stop_notify(%s) failed", uuid, exc_info=True)
 
+        reader_task = self._reader_task
+        self._reader_task = None
+        if reader_task is not None:
+            reader_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reader_task
+
+        pending = self._pending_response
+        self._pending_response = None
+        self._pending_seq = None
+        self._pending_opcodes = frozenset()
+        if pending is not None and not pending.done():
+            pending.cancel()
+
     async def _recv_until(self, channel: _ChannelQueue, expected: bytes) -> None:
         while True:
+            if channel.dropped:
+                raise MiSessionError(
+                    f"notification queue overflow on {channel.uuid} "
+                    f"({channel.dropped} frame(s) dropped)"
+                )
             try:
                 data = await asyncio.wait_for(channel.queue.get(), self._timeout)
             except asyncio.TimeoutError as exc:
@@ -191,34 +244,134 @@ class MiSession:
         nonce = self._profile.rx_nonce(self._keys.dev_iv, counter)
         return self._dev_ccm.decrypt(nonce, ciphertext, self._profile.aad or None)
 
+    def next_sequence(self) -> int:
+        """Return the next non-zero per-session MIOT request sequence."""
+        sequence = self._request_seq
+        self._request_seq = (sequence + 1) & 0xFFFF
+        if self._request_seq == 0:
+            self._request_seq = 1
+        return sequence
+
+    async def initialize(self) -> None:
+        """Enter the MIOT application session, matching Mi Home after login."""
+        sequence = self.next_sequence()
+        request = b"\x05\x20" + sequence.to_bytes(2, "little") + b"\xf0"
+        response = await self.send_request(request)
+        if response != request:
+            raise MiSessionError(
+                f"unexpected MIOT init response: {response.hex()}"
+            )
+
     # ---------------------------------------------------------- frame IO
     async def send_request(self, plaintext: bytes) -> bytes:
-        """Encrypt, ship on AVDTP, wait for + decrypt the response."""
-        counter = self._tx_counter
-        ct = self.encrypt(plaintext, counter)
-        await self._send_encrypted(ct, counter)
-        self._tx_counter = (counter + 1) & 0xFFFF
-
-        # Device interleaves unsolicited telemetry pushes with responses.
-        # Skip frames that don't decrypt or that don't look like responses
-        # to our request seq, up to a small retry budget.
+        """Encrypt and send one request, then await its routed response."""
         req_seq = plaintext[2:4] if len(plaintext) >= 4 else b""
-        for _ in range(8):
-            frame = await self._recv_encrypted()
-            try:
-                pt = self.decrypt(frame.ciphertext, frame.counter)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.debug(
-                    "skip undecryptable frame counter=%d: %s", frame.counter, exc
-                )
-                continue
-            if req_seq and len(pt) >= 4 and pt[2:4] == req_seq:
-                self._rx_counter = (frame.counter + 1) & 0xFFFF
-                return pt
-            LOGGER.debug(
-                "skip non-matching pt counter=%d: %s", frame.counter, pt.hex()
+        if not req_seq:
+            raise MiSessionError("request is missing a sequence number")
+
+        async with self._request_lock:
+            if self._closing:
+                raise MiSessionError("MIOT session is unsubscribed")
+            reader_task = self._reader_task
+            if reader_task is None or reader_task.done():
+                detail = f": {self._reader_error}" if self._reader_error else ""
+                raise MiSessionError(f"MIOT notification reader is not running{detail}")
+
+            loop = asyncio.get_running_loop()
+            response: asyncio.Future[bytes] = loop.create_future()
+            self._pending_seq = req_seq
+            self._pending_opcodes = EXPECTED_RESPONSE_OPCODES.get(
+                plaintext[:2], frozenset((plaintext[:2],))
             )
-        raise MiSessionError("no matching response after 8 frames")
+            self._pending_response = response
+            request_task = asyncio.current_task()
+            self._request_task = request_task
+            counter = self._tx_counter
+            try:
+                ct = self.encrypt(plaintext, counter)
+                await self._send_encrypted(ct, counter)
+                self._tx_counter = (counter + 1) & 0xFFFF
+                try:
+                    return await asyncio.wait_for(response, self._timeout)
+                except asyncio.TimeoutError as exc:
+                    raise MiSessionError(
+                        f"timeout waiting for MIOT response seq={req_seq.hex()}"
+                    ) from exc
+            except asyncio.CancelledError as exc:
+                if self._closing:
+                    raise MiSessionError("MIOT session unsubscribed") from exc
+                raise
+            finally:
+                if self._request_task is request_task:
+                    self._request_task = None
+                if self._pending_response is response:
+                    self._pending_response = None
+                    self._pending_seq = None
+                    self._pending_opcodes = frozenset()
+                if not response.done():
+                    response.cancel()
+
+    async def _reader_loop(self) -> None:
+        """ACK every inbound frame promptly and route decrypted plaintext."""
+        try:
+            while True:
+                if self._response.dropped:
+                    raise MiSessionError(
+                        f"notification queue overflow on {self._response.uuid} "
+                        f"({self._response.dropped} frame(s) dropped)"
+                    )
+                frame = await self._recv_encrypted()
+                try:
+                    plaintext = self.decrypt(frame.ciphertext, frame.counter)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.debug(
+                        "skip undecryptable frame counter=%d: %s",
+                        frame.counter,
+                        exc,
+                    )
+                    continue
+
+                self._rx_counter = (frame.counter + 1) & 0xFFFF
+                response = self._pending_response
+                if (
+                    response is not None
+                    and not response.done()
+                    and len(plaintext) >= 4
+                    and plaintext[2:4] == self._pending_seq
+                    and plaintext[:2] in self._pending_opcodes
+                ):
+                    response.set_result(plaintext)
+                    continue
+
+                is_property_event = (
+                    plaintext[:2] == b"\x0f\x20"
+                    or (
+                        len(plaintext) >= 5
+                        and plaintext[:2] == b"\x0c\x20"
+                        and plaintext[4] == 0x04
+                    )
+                )
+                if is_property_event and self._notification_callback is not None:
+                    try:
+                        self._notification_callback(plaintext)
+                    except Exception:  # noqa: BLE001
+                        LOGGER.exception("MIOT notification callback failed")
+                else:
+                    LOGGER.debug(
+                        "unhandled MIOT plaintext counter=%d: %s",
+                        frame.counter,
+                        plaintext.hex(),
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._reader_error = exc
+            response = self._pending_response
+            if response is not None and not response.done():
+                response.set_exception(
+                    MiSessionError(f"MIOT notification reader failed: {exc}")
+                )
+            LOGGER.debug("MIOT notification reader stopped", exc_info=True)
 
     async def _send_encrypted(self, ct: bytes, counter: int) -> None:
         mtu = getattr(self._auth._client, "mtu_size", None)
@@ -241,76 +394,83 @@ class MiSession:
 
     async def _recv_encrypted(self) -> MiotFrame:
         """Receive one encrypted MIOT frame from the data-response channel."""
+        if self._deferred_frames:
+            return self._deferred_frames.popleft()
         while True:
-            try:
-                data = await asyncio.wait_for(
-                    self._response.queue.get(), self._timeout
-                )
-            except asyncio.TimeoutError as exc:
-                raise MiSessionError("timeout waiting for MIOT response") from exc
+            data = await self._response.queue.get()
             LOGGER.debug("← %s: %s", MIOT_NOTIFY_UUID, data.hex())
             if len(data) < 6:
                 LOGGER.debug("discarding short frame: %s", data.hex())
                 continue
             if data[:4] == b"\x00\x00\x02\x00":
-                counter = int.from_bytes(data[4:6], "little")
+                frame_counter = int.from_bytes(data[4:6], "little")
                 ct = bytes(data[6:])
                 await self._auth._write(MIOT_NOTIFY_UUID, OFFICIAL_ACK)
-                frame = MiotFrame(counter=counter, ciphertext=ct, direction="rx")
+                frame = MiotFrame(
+                    counter=frame_counter, ciphertext=ct, direction="rx"
+                )
                 self._rx_raw.append(frame)
                 return frame
             if data[:4] == bytes([0x00, 0x00, 0x00, MIOT_ANN_CODE]):
                 expected = int.from_bytes(data[4:6], "little")
+                if not 1 <= expected <= MAX_MIOT_PARCELS:
+                    raise MiSessionError(
+                        f"invalid MIOT parcel count {expected}; "
+                        f"maximum is {MAX_MIOT_PARCELS}"
+                    )
                 await self._auth._write(MIOT_NOTIFY_UUID, RCV_RDY)
                 parts: dict[int, bytes] = {}
-                counter: int | None = None
+                parcel_counter: int | None = None
                 while len(parts) < expected:
                     part = await asyncio.wait_for(
                         self._response.queue.get(), self._timeout
                     )
                     LOGGER.debug("parcel: %s", part.hex())
+                    if len(part) >= 6 and part[:4] == b"\x00\x00\x02\x00":
+                        await self._auth._write(MIOT_NOTIFY_UUID, OFFICIAL_ACK)
+                        if len(self._deferred_frames) >= MAX_CAPTURED_FRAMES:
+                            raise MiSessionError(
+                                "too many inline frames interleaved with MIOT parcel"
+                            )
+                        deferred = MiotFrame(
+                            counter=int.from_bytes(part[4:6], "little"),
+                            ciphertext=bytes(part[6:]),
+                            direction="rx",
+                        )
+                        self._rx_raw.append(deferred)
+                        self._deferred_frames.append(deferred)
+                        continue
                     if len(part) < 2:
                         continue
                     idx = int.from_bytes(part[:2], "little")
+                    if not 1 <= idx <= expected:
+                        raise MiSessionError(
+                            f"MIOT parcel index {idx} outside 1..{expected}"
+                        )
                     if idx == 1:
-                        counter = int.from_bytes(part[2:4], "little")
+                        if len(part) < 4:
+                            raise MiSessionError("first MIOT parcel is missing counter")
+                        parcel_counter = int.from_bytes(part[2:4], "little")
                         parts[idx] = bytes(part[4:])
                     else:
                         parts[idx] = bytes(part[2:])
                 await self._auth._write(MIOT_NOTIFY_UUID, RCV_OK)
                 ct = b"".join(parts[i] for i in sorted(parts))
-                assert counter is not None
-                frame = MiotFrame(counter=counter, ciphertext=ct, direction="rx")
+                assert parcel_counter is not None
+                frame = MiotFrame(
+                    counter=parcel_counter, ciphertext=ct, direction="rx"
+                )
                 self._rx_raw.append(frame)
                 return frame
             LOGGER.debug("discarding unknown frame: %s", data.hex())
 
     # ---------------------------------------------------------- passive
     async def collect_pushes(self, duration: float) -> list[MiotFrame]:
-        """Passively drain incoming frames for `duration` seconds.
-
-        The device streams telemetry once a client is logged in; we just
-        ACK and record. Useful for offline nonce cracking.
-        """
-        deadline = asyncio.get_event_loop().time() + duration
-        collected: list[MiotFrame] = []
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                data = await asyncio.wait_for(self._response.queue.get(), remaining)
-            except asyncio.TimeoutError:
-                break
-            if len(data) < 6 or data[:4] != b"\x00\x00\x02\x00":
-                LOGGER.debug("push discard: %s", data.hex())
-                continue
-            counter = int.from_bytes(data[4:6], "little")
-            ct = bytes(data[6:])
-            await self._auth._write(MIOT_NOTIFY_UUID, OFFICIAL_ACK)
-            frame = MiotFrame(counter=counter, ciphertext=ct, direction="rx")
-            self._rx_raw.append(frame)
-            collected.append(frame)
-        return collected
-
-
+        """Return the bounded frame history accumulated during `duration`."""
+        before = tuple(self._rx_raw)
+        await asyncio.sleep(duration)
+        after = tuple(self._rx_raw)
+        overlap = min(len(before), len(after))
+        while overlap and before[-overlap:] != after[:overlap]:
+            overlap -= 1
+        return list(after[overlap:])

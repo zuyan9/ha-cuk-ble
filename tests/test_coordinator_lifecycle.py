@@ -85,6 +85,7 @@ AD1204UCoordinator = coordinator_module.AD1204UCoordinator
 class FakeHass:
     def __init__(self) -> None:
         self.tasks: list[asyncio.Task] = []
+        self.loop = asyncio.get_running_loop()
 
     def async_create_background_task(self, coro, *, name: str):
         task = asyncio.create_task(coro, name=name)
@@ -116,11 +117,17 @@ def _make_coordinator(*, idle_release: float) -> AD1204UCoordinator:
     coordinator.address = "AA:BB:CC:DD:EE:FF"
     coordinator._idle_release = idle_release
     coordinator._idle_task = None
+    coordinator._disconnect_task = None
     coordinator._lock = asyncio.Lock()
     coordinator._client = None
     coordinator._auth = None
     coordinator._session = None
+    coordinator._property_values = {}
+    coordinator._pending_notification_values = {}
+    coordinator._baseline_session = None
+    coordinator._notification_publish_pending = False
     coordinator._shutdown_requested = False
+    coordinator.data = None
     return coordinator
 
 
@@ -293,12 +300,29 @@ def test_new_connection_arms_idle_release(monkeypatch) -> None:
                 assert token == b"token"
                 return object()
 
+            async def unsubscribe(self) -> None:
+                pass
+
         class FakeSession:
-            def __init__(self, auth, keys, *, timeout: float) -> None:
+            def __init__(
+                self,
+                auth,
+                keys,
+                *,
+                timeout: float,
+                notification_callback,
+            ) -> None:
                 assert isinstance(auth, FakeAuth)
                 assert timeout == 15
+                self.notification_callback = notification_callback
 
             async def subscribe(self) -> None:
+                pass
+
+            async def initialize(self) -> None:
+                pass
+
+            async def unsubscribe(self) -> None:
                 pass
 
         monkeypatch.setattr(
@@ -343,6 +367,138 @@ def test_scheduled_poll_does_not_rearm_idle_release(monkeypatch) -> None:
 
         coordinator._arm_idle_release.assert_not_called()
         get_properties.assert_awaited_once()
+        assert coordinator._property_values == {}
+
+    asyncio.run(run())
+
+
+def test_property_notification_merges_partial_snapshot() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        session = object()
+        coordinator._session = session
+        coordinator._baseline_session = session
+        property_value = coordinator_module.PropertyValue
+        coordinator._property_values = {
+            (2, 1): property_value(2, 1, 0, 0x04, 0x50, 0x32010A01),
+            (2, 2): property_value(2, 2, 0, 0x04, 0x50, 0x64020A01),
+            (2, 5): property_value(2, 5, 0, 0x01, 0x10, 3),
+        }
+        coordinator.data = coordinator_module._build_snapshot(
+            coordinator._property_values
+        )
+
+        published = []
+
+        def set_updated(data) -> None:
+            published.append(data)
+            coordinator.data = data
+
+        coordinator.async_set_updated_data = set_updated
+        coordinator._handle_notification(
+            session,
+            bytes.fromhex("0f 20 34 12 04 01 02 01 00 04 50 01 0a 32 c8"),
+        )
+        await asyncio.sleep(0)
+
+        assert len(published) == 1
+        assert published[0].ports["c1"].power_w == 100.0
+        assert published[0].ports["c2"].power_w == 2.0
+        assert published[0].scene_mode == 3
+        assert published[0].total_power_w == 102.0
+
+    asyncio.run(run())
+
+
+def test_setting_echo_merges_and_stale_session_is_ignored() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        current_session = object()
+        stale_session = object()
+        coordinator._session = current_session
+        coordinator._baseline_session = current_session
+        property_value = coordinator_module.PropertyValue
+        coordinator._property_values = {
+            (2, 0x13): property_value(2, 0x13, 0, 0x01, 0x00, True),
+        }
+        coordinator.data = coordinator_module._build_snapshot(
+            coordinator._property_values
+        )
+        coordinator.async_set_updated_data = Mock()
+        event = bytes.fromhex("0c 20 22 00 04 01 02 13 00 01 00 00")
+
+        coordinator._handle_notification(stale_session, event)
+        await asyncio.sleep(0)
+        coordinator.async_set_updated_data.assert_not_called()
+
+        coordinator._handle_notification(current_session, event)
+        await asyncio.sleep(0)
+        updated = coordinator.async_set_updated_data.call_args.args[0]
+        assert updated.screenoff_while_idle is False
+
+    asyncio.run(run())
+
+
+def test_reconnect_push_waits_for_current_session_baseline() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        session = object()
+        coordinator._session = session
+        # Data from a previous connection remains visible while reconnecting.
+        coordinator.data = coordinator_module.AD1204UData(scene_mode=3)
+        coordinator.async_set_updated_data = Mock()
+
+        first = bytes.fromhex(
+            "0f 20 34 12 04 01 02 01 00 04 50 01 0a 31 c8"
+        )
+        coordinator._handle_notification(session, first)
+        await asyncio.sleep(0)
+        coordinator.async_set_updated_data.assert_not_called()
+
+        coordinator._baseline_session = session
+        second = bytes.fromhex(
+            "0f 20 35 12 04 01 02 01 00 04 50 01 0a 32 c8"
+        )
+        coordinator._handle_notification(session, second)
+        await asyncio.sleep(0)
+        coordinator.async_set_updated_data.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_queued_push_cannot_restore_success_after_disconnect() -> None:
+    async def run() -> None:
+        coordinator = _make_coordinator(idle_release=300)
+        client = FakeClient()
+        session = FakeSubscription()
+        auth = FakeSubscription()
+        coordinator._client = client
+        coordinator._session = session
+        coordinator._auth = auth
+        coordinator._baseline_session = session
+        property_value = coordinator_module.PropertyValue
+        coordinator._property_values = {
+            (2, 1): property_value(2, 1, 0, 0x04, 0x50, 0x32010A01),
+        }
+        coordinator.data = coordinator_module._build_snapshot(
+            coordinator._property_values
+        )
+        coordinator.async_set_updated_data = Mock()
+        coordinator.async_set_update_error = Mock()
+
+        coordinator._handle_notification(
+            session,
+            bytes.fromhex("0f 20 34 12 04 01 02 01 00 04 50 01 0a 32 c8"),
+        )
+        coordinator._handle_disconnect(client)
+        cleanup_task = coordinator._disconnect_task
+        assert cleanup_task is not None
+        await cleanup_task
+        await asyncio.sleep(0)
+
+        coordinator.async_set_update_error.assert_called_once()
+        coordinator.async_set_updated_data.assert_not_called()
+        assert coordinator._baseline_session is None
 
     asyncio.run(run())
 

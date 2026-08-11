@@ -13,7 +13,7 @@
   "dependencies": ["bluetooth_adapters"],
   "documentation": "https://github.com/zuyan9/ha-cuk-ble",
   "integration_type": "device",
-  "iot_class": "local_polling",
+  "iot_class": "local_push",
   "issue_tracker": "https://github.com/zuyan9/ha-cuk-ble/issues",
   "requirements": [
     "bleak>=0.22",

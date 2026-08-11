@@ -11,7 +11,7 @@ def test_home_assistant_manifest_is_connectable_sensor_only_shape() -> None:
 
     assert manifest["domain"] == "cuktech_ble"
     assert manifest["config_flow"] is True
-    assert manifest["iot_class"] == "local_polling"
+    assert manifest["iot_class"] == "local_push"
     assert manifest["bluetooth"] == [
         {
             "local_name": AD1204_LOCAL_NAME,

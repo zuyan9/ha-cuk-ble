@@ -4,6 +4,7 @@ from cuktech_ble.xiaomi.properties import (
     MiotProtocolError,
     encode_get_properties,
     encode_set_property,
+    parse_notification,
     parse_response,
     parse_set_response,
 )
@@ -78,3 +79,44 @@ def test_parse_response_accepts_0x1c_opcode_variant() -> None:
     assert items[0].key == (2, 1)
     assert items[0].value == 0x33000A01
     assert items[1].key == (2, 0x11)
+
+
+def test_parse_port_notification_without_status_field() -> None:
+    pt = bytes.fromhex("0f 20 34 12 04 01 02 01 00 04 50 01 0a 32 c8")
+
+    items = parse_notification(pt)
+
+    assert len(items) == 1
+    assert items[0].key == (2, 1)
+    assert items[0].status == 0
+    assert items[0].value == 0xC8320A01
+
+
+def test_parse_setting_echo_normalizes_bool() -> None:
+    pt = bytes.fromhex("0c 20 22 00 04 01 02 13 00 01 00 00")
+
+    items = parse_notification(pt)
+
+    assert len(items) == 1
+    assert items[0].key == (2, 0x13)
+    assert items[0].value is False
+
+
+def test_parse_notification_rejects_request_and_truncation() -> None:
+    with pytest.raises(MiotProtocolError, match="bad notification header"):
+        parse_notification(bytes.fromhex("0c 20 22 00 00 01 02 13 00 01 00 00"))
+
+    with pytest.raises(MiotProtocolError, match="truncated property value"):
+        parse_notification(bytes.fromhex("0f 20 22 00 04 01 02 01 00 04 50 01"))
+
+
+def test_parse_response_accepts_uint16_value() -> None:
+    pt = bytes.fromhex("66 20 01 00 03 01 02 08 00 00 00 02 20 2c 01")
+
+    # 0x66 is a different app query response and is not accepted by the
+    # regular get-properties parser yet; exercise the shared typed entry
+    # layout through a known response opcode instead.
+    pt = b"\x1c" + pt[1:]
+    items = parse_response(pt)
+
+    assert items[0].value == 300

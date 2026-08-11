@@ -60,28 +60,68 @@ def parse_response(pt: bytes) -> list[PropertyValue]:
     # Body layout is identical across all three.
     if len(pt) < 6 or pt[1] != 0x20 or pt[0] not in (0x93, 0x1c, 0x0e):
         raise MiotProtocolError(f"bad response header: {pt[:6].hex()}")
+    return _parse_property_entries(pt, count=pt[5], includes_status=True)
+
+
+def parse_notification(pt: bytes) -> list[PropertyValue]:
+    """Decode a spontaneous property update from the charger.
+
+    Port telemetry uses opcode ``0x0f``. Setting changes are echoed with
+    opcode ``0x0c`` and the event flag ``0x04``. Both omit the two-byte status
+    field found in get-property responses.
+    """
+    if (
+        len(pt) < 6
+        or pt[1] != 0x20
+        or (pt[0] == 0x0C and pt[4] != 0x04)
+        or pt[0] not in (0x0F, 0x0C)
+    ):
+        raise MiotProtocolError(f"bad notification header: {pt[:6].hex()}")
+    return _parse_property_entries(pt, count=pt[5], includes_status=False)
+
+
+def _parse_property_entries(
+    pt: bytes, *, count: int, includes_status: bool
+) -> list[PropertyValue]:
+    """Decode the typed property entries shared by responses and events."""
     i = 6
     out: list[PropertyValue] = []
-    while i < len(pt):
+    for _ in range(count):
+        prefix_size = 7 if includes_status else 5
+        if i + prefix_size > len(pt):
+            raise MiotProtocolError(
+                f"truncated property entry at offset {i}: {pt.hex()}"
+            )
         siid = pt[i]
         piid = int.from_bytes(pt[i + 1 : i + 3], "little")
-        status = int.from_bytes(pt[i + 3 : i + 5], "little")
-        type_byte = pt[i + 5]
-        marker = pt[i + 6]
-        if type_byte == 0x04:
-            raw = pt[i + 7 : i + 11]
-            out.append(PropertyValue(siid, piid, status, type_byte, marker,
-                                     int.from_bytes(raw, "little")))
-            i += 11
-        elif type_byte == 0x01:
-            raw = pt[i + 7 : i + 8]
-            val: Any = bool(raw[0]) if marker == 0x00 else raw[0]
-            out.append(PropertyValue(siid, piid, status, type_byte, marker, val))
-            i += 8
+        if includes_status:
+            status = int.from_bytes(pt[i + 3 : i + 5], "little")
+            type_byte = pt[i + 5]
+            marker = pt[i + 6]
+            value_offset = i + 7
         else:
+            status = 0
+            type_byte = pt[i + 3]
+            marker = pt[i + 4]
+            value_offset = i + 5
+
+        value_size = {0x01: 1, 0x02: 2, 0x04: 4}.get(type_byte)
+        if value_size is None:
             raise MiotProtocolError(
                 f"unknown type 0x{type_byte:02x} at offset {i} in {pt.hex()}"
             )
+        if value_offset + value_size > len(pt):
+            raise MiotProtocolError(
+                f"truncated property value at offset {i}: {pt.hex()}"
+            )
+        raw = pt[value_offset : value_offset + value_size]
+        value: Any
+        if type_byte == 0x01 and marker == 0x00:
+            value = bool(raw[0])
+        else:
+            value = int.from_bytes(raw, "little")
+        out.append(PropertyValue(siid, piid, status, type_byte, marker, value))
+        i = value_offset + value_size
     return out
 
 
@@ -89,8 +129,10 @@ async def get_properties(
     session: MiSession,
     tuples: tuple[tuple[int, int], ...] = DEFAULT_READ_TUPLES,
     *,
-    seq: int = 0x001b,
+    seq: int | None = None,
 ) -> dict[tuple[int, int], PropertyValue]:
+    if seq is None:
+        seq = session.next_sequence()
     request = encode_get_properties(seq, tuples)
     response_pt = await session.send_request(request)
     return {item.key: item for item in parse_response(response_pt)}
@@ -146,10 +188,12 @@ async def set_property(
     piid: int,
     value: int | bool,
     *,
-    seq: int = 0x0100,
+    seq: int | None = None,
     u32: bool = False,
 ) -> None:
     """Write one property. Raises MiotProtocolError on non-zero status."""
+    if seq is None:
+        seq = session.next_sequence()
     request = encode_set_property(seq, siid, piid, value, u32=u32)
     response_pt = await session.send_request(request)
     results = parse_set_response(response_pt)
