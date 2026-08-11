@@ -70,6 +70,7 @@ update_hacs*.py
 
 # Other agent metadata kept out of the repo
 GEMINI.md
+AGENTS.md
 
 # Tablet / charger screencaps (debugging artifacts)
 screen*.png
