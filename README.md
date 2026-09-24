@@ -17,8 +17,8 @@ Requires Home Assistant 2025.3 or newer.
 1. Click **Open in HACS** above (or add this repo as an Integration custom
    repository in HACS), install, and restart Home Assistant.
 2. Click **Add integration** above, pick **CUKTECH BLE**, and either:
-   - log in with the Mi Cloud QR flow to fetch the BLE pairing token, or
-   - paste an existing 24-character hex token.
+   - Log in with the Mi Cloud QR flow to fetch the BLE pairing token
+   - Or, paste 24-character token (using e.g. [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor))
 
 That's it — HA creates one device per charger with sensors for each port.
 
